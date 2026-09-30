@@ -7,7 +7,7 @@
  * then reload the list, then open what was just stored).
  */
 import { useCallback, useEffect, useState } from 'react'
-import type { TrackRecord, TrackSummary } from '../protocol.ts'
+import type { TrackInput, TrackRecord, TrackSummary } from '../protocol.ts'
 import { api } from './util.ts'
 import { parseTrackFile } from '../track/import.ts'
 
@@ -61,7 +61,8 @@ export function useTracks(): TracksState {
           const text = await file.text()
           const parsed = parseTrackFile(file.name, text)
           setNote(`正在保存 ${file.name}…`)
-          const saved = await api<TrackSummary>('tracks', {...parsed, filename: file.name})
+          const input: TrackInput = {...parsed, filename: file.name, source: text}
+          const saved = await api<TrackSummary>('tracks', input)
           setList(previous => [saved, ...previous])
           setNote('')
           openTrack(saved.id)

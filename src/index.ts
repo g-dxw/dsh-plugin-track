@@ -100,12 +100,13 @@ export function apply(ctx: Context): void {
           if (!source) return json(res, 404, {error: '原始文件不存在'})
           const track = readTrack(id)
           const name = (track?.filename || `track.${source.ext}`).replace(/["\\\r\n]/gu, '')
+          const asciiName = name.replace(/[^\x20-\x7e]/gu, '_')
           res.writeHead(200, {
             'content-type': 'application/octet-stream',
             'content-length': String(source.body.length),
             // The original file is handed back byte for byte, under the name it
             // was imported with, so a round trip through the panel is lossless.
-            'content-disposition': `attachment; filename="${name}"; filename*=UTF-8''${encodeURIComponent(name)}`,
+            'content-disposition': `attachment; filename="${asciiName}"; filename*=UTF-8''${encodeURIComponent(name)}`,
             'cache-control': 'no-store',
           })
           res.end(source.body)

@@ -83,7 +83,7 @@ corepack yarn typecheck
 corepack yarn test
 ```
 
-`tests/` 下五个测试文件、75 个用例，都不需要真浏览器（`fixtures.ts` 是被它们共用的固定样本，不是测试）：
+`tests/` 下六个测试文件、78 个用例，都不需要真浏览器（`fixtures.ts` 是被它们共用的固定样本，不是测试）：
 
 | 文件 | 用例 | 覆盖 |
 | --- | --- | --- |
@@ -92,6 +92,7 @@ corepack yarn test
 | `geojson.test.ts` | 12 | 导出 GeoJSON 的形状（含 `[lon, lat, ele]` 顺序、残缺点的处理）、文件名清洗 |
 | `artifacts.test.ts` | 16 | 存储读写、半成品目录容错、越界 id 拒绝（真临时文件系统） |
 | `routes.test.ts` | 4 | 真起 `dsh-host-webserver`，打全端点，含回环门禁的正反用例 |
+| `client-import.test.ts` | 3 | 真实 React 导入 GPX / KML / TCX 到本地服务，验证中文文件名与原文件逐字节导出 |
 
 
 `lib/client.js` 约 2.7 MB —— 主要是 MapLibre GL 与 chart.js，它们不在客户端的运行时模块白名单里，只能打进 bundle。
