@@ -78,6 +78,10 @@ export const KML_TRACK = `<?xml version="1.0" encoding="UTF-8"?>
   </Document>
 </kml>`
 
+/** A named waypoint precedes the route, as in hiking KML exports. */
+export const KML_WAYPOINT_FIRST = KML_TRACK.replace('<Document>', `<Document>
+  <Placemark><name>起点</name><Point><coordinates>120,30,100</coordinates></Point></Placemark>`)
+
 /** A Garmin TCX activity: one `Lap` holding one `Track` of three points. */
 export const TCX_TRACK = `<?xml version="1.0" encoding="UTF-8"?>
 <TrainingCenterDatabase xmlns="http://www.garmin.com/xmlschemas/TrainingCenterDatabase/v2">
@@ -134,3 +138,15 @@ export const STEP = 10 * MINUTE
  * quietly assert the wrong distance.
  */
 export const LEG_METRES = 962.9763121562811
+
+/** Three measured legs' surface length, including their actual height changes. */
+export const SURFACE_METRES = Math.hypot(LEG_METRES, 20) + Math.hypot(LEG_METRES, 10)
+
+/** Exporter stores a route summary, with untimed coordinates and unrelated photo time. */
+export const KML_SUMMARY = KML_TRACK.replace('<Document>', `<Document>
+  <ExtendedData>
+    <Data name="TimeUsed"><value>45222000</value></Data>
+    <Data name="BeginTime"><value>1780037302000</value></Data>
+    <Data name="EndTime"><value>1780082524000</value></Data>
+  </ExtendedData>
+  <Placemark><TimeStamp><when>2026-05-30T23:00:00Z</when></TimeStamp><Point><coordinates>121,31</coordinates></Point></Placemark>`)

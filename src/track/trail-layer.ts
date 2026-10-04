@@ -16,11 +16,11 @@ export const TRACK_START = 'cqai-track-start'
 export const TRACK_END = 'cqai-track-end'
 export const TRACK_ENDS_SOURCE = 'cqai-track-ends'
 
-/** Track colour; also used by the elevation chart so the two read as one thing. */
-export const TRACK_COLOR = '#b8a1ff'
+/** Default track colour; also used by the elevation chart. */
+export const TRACK_COLOR = '#3dc5ff'
 
 export interface TrackGeoJSON {
-  line: GeoJSON.Feature<GeoJSON.LineString>
+  line: GeoJSON.Feature<GeoJSON.LineString | GeoJSON.MultiLineString>
   ends: GeoJSON.FeatureCollection<GeoJSON.Point>
 }
 
@@ -31,20 +31,31 @@ export interface TrackGeoJSON {
  * profile reads back out; the timestamp rides along in `coordinateProperties`
  * the same way wanderer's `TrackSegment.toGeoJSON` puts it.
  */
-export function toGeoJSON(points: readonly TrackPoint[]): TrackGeoJSON {
+export function toGeoJSON(points: readonly TrackPoint[], segmentStarts?: readonly number[]): TrackGeoJSON {
   const coordinates: number[][] = []
   const times: (string | null)[] = []
-  for (const [lon, lat, ele, time] of points) {
-    if (typeof lon !== 'number' || typeof lat !== 'number') continue
-    if (!Number.isFinite(lon) || !Number.isFinite(lat)) continue
+  const parts: number[][][] = [], partTimes: (string | null)[][] = []
+  const starts = new Set(segmentStarts)
+  let newRun = true
+  for (let index = 0; index < points.length; index++) {
+    const [lon, lat, ele, time] = points[index]
+    if (starts.has(index)) newRun = true
+    if (typeof lon !== 'number' || typeof lat !== 'number' || !Number.isFinite(lon) || !Number.isFinite(lat)
+      || (segmentStarts && (Math.abs(lon) > 180 || Math.abs(lat) > 90))) {newRun = true; continue}
     coordinates.push(Number.isFinite(ele) ? [lon, lat, ele as number] : [lon, lat])
-    times.push(time ? new Date(time).toISOString() : null)
+    const timestamp = segmentStarts ? (typeof time === 'number' && Number.isFinite(new Date(time).getTime()) ? new Date(time).toISOString() : null)
+      : time ? new Date(time).toISOString() : null
+    times.push(timestamp)
+    if (newRun) {parts.push([]); partTimes.push([]); newRun = false}
+    parts[parts.length - 1].push(coordinates[coordinates.length - 1])
+    partTimes[partTimes.length - 1].push(timestamp)
   }
 
-  const line: GeoJSON.Feature<GeoJSON.LineString> = {
+  const split = !!segmentStarts && parts.length > 1
+  const line: GeoJSON.Feature<GeoJSON.LineString | GeoJSON.MultiLineString> = {
     type: 'Feature',
-    geometry: {type: 'LineString', coordinates},
-    properties: {coordinateProperties: {times}},
+    geometry: split ? {type: 'MultiLineString', coordinates: parts} : {type: 'LineString', coordinates},
+    properties: {coordinateProperties: {times: split ? partTimes : times}},
   }
 
   const ends: GeoJSON.FeatureCollection<GeoJSON.Point> = {type: 'FeatureCollection', features: []}
@@ -58,9 +69,10 @@ export function toGeoJSON(points: readonly TrackPoint[]): TrackGeoJSON {
 
 /**
  * Add (or refresh) the track on a map. Safe to call after a `setStyle`, and
- * safe to call twice — an existing source or layer is replaced, not duplicated.
+ * safe to call twice — existing sources are refreshed and layers are retained.
  */
-export function addTrack(map: MapLibreMap, data: TrackGeoJSON): void {
+export function addTrack(map: MapLibreMap, data: TrackGeoJSON, color: string = TRACK_COLOR): void {
+  if (!styleIsReady(map)) return
   setData(map, TRACK_SOURCE, data.line)
   setData(map, TRACK_ENDS_SOURCE, data.ends)
   ensureLayer(map, {
@@ -70,12 +82,13 @@ export function addTrack(map: MapLibreMap, data: TrackGeoJSON): void {
     layout: { 'line-cap': 'round', 'line-join': 'round' },
     paint: { 'line-color': '#00000066', 'line-width': 8 },
   })
-  ensureLayer(map, {
+  if (map.getLayer(TRACK_LINE)) updateTrackColor(map, color)
+  else ensureLayer(map, {
     id: TRACK_LINE,
     type: 'line',
     source: TRACK_SOURCE,
     layout: { 'line-cap': 'round', 'line-join': 'round' },
-    paint: { 'line-color': TRACK_COLOR, 'line-width': 4 },
+    paint: { 'line-color': color, 'line-width': 4 },
   })
   for (const [id, role] of [[TRACK_START, 'start'], [TRACK_END, 'end']] as const) {
     ensureLayer(map, {
@@ -91,6 +104,11 @@ export function addTrack(map: MapLibreMap, data: TrackGeoJSON): void {
       },
     })
   }
+}
+
+/** A live color edit touches only the stroke paint; geometry and endpoint markers stay intact. */
+export function updateTrackColor(map: MapLibreMap, color: string): void {
+  if (map.getLayer(TRACK_LINE)) map.setPaintProperty(TRACK_LINE, 'line-color', color)
 }
 
 /** Drop every track layer and source, leaving the basemap alone. */
@@ -117,24 +135,20 @@ function setData(map: MapLibreMap, id: string, data: GeoJSON.Feature | GeoJSON.F
     source.setData(data as GeoJSON.GeoJSON)
     return
   }
-  if (!map.style || !styleIsReady(map)) return
   map.addSource(id, {type: 'geojson', data: data as GeoJSON.GeoJSON})
 }
 
 function ensureLayer(map: MapLibreMap, layer: Parameters<MapLibreMap['addLayer']>[0]): void {
-  if (!map.style || !styleIsReady(map)) return
-  if (map.getLayer(layer.id)) map.removeLayer(layer.id)
+  if (map.getLayer(layer.id)) return
   map.addLayer(layer)
 }
 
 /**
- * `map.style` exists as soon as the Map does, but `addSource` throws until the
- * style has actually loaded. `isStyleLoaded()` also flips false again while a
- * new style is diffing, and `styledata`/`load` re-run this path, so the guard
- * only ever defers work to the next event.
+ * `getStyle()` returns nothing until the style is initialized, which is the
+ * prerequisite for adding sources and layers. `isStyleLoaded()` also waits for
+ * source data and tiles: adding our first GeoJSON source makes it false, even
+ * though the style can already accept the remaining source and all four layers.
  */
 export function styleIsReady(map: MapLibreMap): boolean {
-  // The typing admits `void` because MapLibre returns nothing in a couple of
-  // odd paths (`isStyleLoaded` delegates to the style object when there is one).
-  return map.isStyleLoaded() === true
+  return Boolean(map.getStyle())
 }

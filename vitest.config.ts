@@ -4,5 +4,6 @@ export default defineConfig({
   test: {
     include: ['tests/**/*.test.ts'],
     environment: 'node',
+    server: {deps: {inline: ['@panzoom/panzoom']}},
   },
 })

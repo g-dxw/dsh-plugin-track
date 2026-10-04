@@ -10,8 +10,9 @@ import type {
 
 import { Chart, registerables } from "chart.js";
 import zoomPlugin from "chartjs-plugin-zoom";
-// @ts-ignore
-import { CrosshairPlugin } from "chartjs-plugin-crosshair";
+// The package's CommonJS entry only registers itself and exports no plugin.
+// Use the ESM entry so the client bundle receives the actual plugin object.
+import { CrosshairPlugin } from "chartjs-plugin-crosshair/dist/chartjs-plugin-crosshair.esm.js";
 
 import { haversineDistance } from "../../model/utils";
 import type { Waypoint } from "./waypoint";
@@ -40,7 +41,7 @@ function extractLineStrings(
             extractFromGeometry(feature.geometry);
         }
         if (feature.properties?.coordinateProperties?.times) {
-            const coordinateTimes = feature.properties?.coordinateProperties?.times.map((t: string) => new Date(t))
+            const coordinateTimes = feature.properties?.coordinateProperties?.times.map((t: string | null) => t === null ? new Date(NaN) : new Date(t))
             times.push(...coordinateTimes)
         }
     }
@@ -357,6 +358,8 @@ const elevationProfileDefaultOptions: ElevationProfileOptions = {
  */
 export class ElevationProfile {
     private canvas: HTMLCanvasElement;
+    private destroyed = false;
+    private eventCleanups: Array<() => void> = [];
     private settings: ElevationProfileOptions;
     public chart: Chart<"line", Array<number>, number>;
     private elevatedPositions: Position[] = [];
@@ -429,12 +432,15 @@ export class ElevationProfile {
         // https://github.com/AbelHeinsbroek/chartjs-plugin-crosshair/issues/119
         const CustomCrosshairPlugin = function (plugin: typeof CrosshairPlugin) {
             const originalAfterDraw = plugin.afterDraw;
-            plugin.afterDraw = function (chart: Chart & { crosshair?: typeof CrosshairPlugin }, easing: boolean) {
-                if (chart && chart.crosshair) {
-                    originalAfterDraw.call(this, chart, easing);
-                }
+            const guarded: typeof plugin = {
+                ...plugin,
+                afterDraw(chart, args, options) {
+                    if ("crosshair" in chart && chart.crosshair) {
+                        originalAfterDraw?.call(this, chart, args, options);
+                    }
+                },
             };
-            return plugin;
+            return guarded;
         };
         Chart.register(CustomCrosshairPlugin(CrosshairPlugin));
 
@@ -457,7 +463,7 @@ export class ElevationProfile {
                         // borderColor: this.settings.profileLineColor ?? "#0000",
                         backgroundColor: this.settings.profileBackgroundColor ?? "#0000",
                         tension: 0.1,
-                        spanGaps: true,
+                        spanGaps: false,
 
                         // If line color is null, the line width is set to 0
                         borderWidth: this.settings.profileLineColor
@@ -691,6 +697,8 @@ export class ElevationProfile {
                     id: "waypointPlugin",
                     afterDraw: (chart, args, options) => {
                         const waypointContainer = document.getElementById("waypoint-container") as HTMLDivElement;
+                        // The standalone panel does not mount a waypoint overlay.
+                        if (!waypointContainer) return;
                         waypointContainer.innerHTML = ""; // Clear previous ticks
 
                         const xScale = chart.scales.x; // Get X-axis scale
@@ -736,23 +744,23 @@ export class ElevationProfile {
             ],
         });
         if (typeof this.settings.onLeave === "function") {
-            this.chart.canvas.addEventListener("mouseout", this.settings.onLeave)
+            this.listen(this.canvas, "mouseout", this.settings.onLeave)
         }
 
         if (typeof this.settings.onEnter === "function") {
-            this.chart.canvas.addEventListener("mouseenter", this.settings.onEnter)
+            this.listen(this.canvas, "mouseenter", this.settings.onEnter)
         }
 
         // If the tooltip is shown, then we hide it when panning the chart
         if (this.settings.displayTooltip) {
             let mouseDown = false;
-            this.chart.canvas.addEventListener("mousedown", () => {
+            this.listen(this.canvas, "mousedown", () => {
                 mouseDown = true;
             });
 
-            this.chart.canvas.addEventListener("mousemove", () => {
+            this.listen(this.canvas, "mousemove", () => {
                 if (
-                    mouseDown &&
+                    mouseDown && !this.destroyed &&
                     this.chart.options.plugins &&
                     this.chart.options.plugins.tooltip
                 ) {
@@ -761,13 +769,30 @@ export class ElevationProfile {
                 }
             });
 
-            window.addEventListener("mouseup", () => {
+            this.listen(window, "mouseup", () => {
+                if (!mouseDown || this.destroyed) return;
+                mouseDown = false;
                 if (this.chart.options.plugins && this.chart.options.plugins.tooltip) {
                     this.chart.options.plugins.tooltip.enabled = true;
                     this.chart.update();
-                    mouseDown = false;
                 }
             });
+        }
+    }
+
+    private listen(target: EventTarget, type: string, listener: EventListener): void {
+        target.addEventListener(type, listener);
+        this.eventCleanups.push(() => target.removeEventListener(type, listener));
+    }
+
+    destroy(): void {
+        if (this.destroyed) return;
+        this.destroyed = true;
+        for (const remove of this.eventCleanups.splice(0)) remove();
+        try {
+            this.chart.destroy();
+        } finally {
+            this.canvas.remove();
         }
     }
 
@@ -940,6 +965,8 @@ export class ElevationProfile {
 
         this.cumulatedDPlus = [];
         this.grade = [];
+        this.cumulatedTime = [];
+        this.speed = [];
         this.waypoints = waypoints ?? [];
         this.waypointPositions = [];
 
@@ -973,10 +1000,10 @@ export class ElevationProfile {
                 const elevationDelta = elevation - elevationPrevious;
                 const segmentDistance =
                     this.cumulatedDistance[i] - this.cumulatedDistance[segmentStartIndex];
-                cumulatedDPlus += Math.max(0, elevationDelta);
+                if (Number.isFinite(elevationDelta)) cumulatedDPlus += Math.max(0, elevationDelta);
                 this.cumulatedDPlus.push(cumulatedDPlus);
 
-                if (time) {
+                if (time && Number.isFinite(time.getTime()) && this.times[i - 1] && Number.isFinite(this.times[i - 1].getTime())) {
                     const timePrevious = this.times[i - 1];
                     const timeDelta = (time.getTime() - timePrevious.getTime()) / (1000);
                     cumulatedTime += timeDelta;

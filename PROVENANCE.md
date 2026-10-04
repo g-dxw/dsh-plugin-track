@@ -35,11 +35,13 @@
 | `web/src/lib/models/gpx/person.ts` | `src/track/model/person.ts` | 13 | |
 | `web/src/lib/models/gpx/utils.ts` | `src/track/model/utils.ts` | 45 | `haversineDistance` 等 |
 | `web/src/lib/models/gpx/gpx-metrics-computation.ts` | `src/track/model/gpx-metrics-computation.ts` | 86 | 距离/爬升平滑算法 |
-| `web/src/lib/vendor/maplibre-elevation-profile/elevationprofile.ts` | `src/track/vendor/elevation-profile/elevationprofile.ts` | 1076 | 改了 4 处 import，见下 |
+| `web/src/lib/vendor/maplibre-elevation-profile/elevationprofile.ts` | `src/track/vendor/elevation-profile/elevationprofile.ts` | 1076 | import 与独立面板适配，见下 |
 | `web/src/lib/vendor/maplibre-elevation-profile/elevationprofile-control.ts` | `src/track/vendor/elevation-profile/elevationprofile-control.ts` | 247 | 同样只改 import |
 | `web/src/lib/vendor/maplibre-elevation-profile/tools.ts` | `src/track/vendor/elevation-profile/tools.ts` | 49 | |
 | `web/src/lib/vendor/maplibre-layer-manager/trail-layer.ts` | `src/track/trail-layer.ts` | 38 | 见下 |
 | `web/static/styles/ofm.json` | `src/track/basemap/openfreemap.json` | — | 见下 |
+| `web/src/lib/components/trail/sandbox_terrain_three.svelte` | `src/track/sandbox/renderer.ts`、`geometry.ts`、`sampling.ts` | — | Three.js 沙盘流程、网格与贴图适配，见下 |
+| `web/src/lib/util/sandbox_util.ts` | `src/track/sandbox/coordinates.ts` | — | 范围留白与客户端投影适配 |
 
 ### ISC（不是 AGPL）
 
@@ -74,18 +76,59 @@ app 层的耦合。逐条：
   的 `haversineDistance`、`../../model/waypoint` 的**仅类型**、本地五行 `formatTimeHHMM`）；
 - `import * as xml2js from 'isomorphic-xml2js'` → `./gpx-xml` 的 `parseGpxXml`。
 
+**`src/track/vendor/elevation-profile/elevationprofile.ts`**：显式使用
+`chartjs-plugin-crosshair` 的 ESM 入口，避免 CommonJS 入口没有导出插件对象而在初始化时
+抛错；复制十字线插件后再包装绘制钩子，避免重复打开详情时修改共享对象。独立面板没有
+上游页面的 `waypoint-container`，因此缺少该容器时跳过航点刻度覆盖层。
+新增 `destroy()` 清理窗口与 canvas 的自有事件监听，防止退出详情后旧图表仍响应鼠标事件。
+
 **`src/track/trail-layer.ts`**：上游把图层表达成一整个独立 style；本插件要在换底图
 （`setStyle` 会清空自定义 source/layer）之后把轨迹**重新挂回去**，所以改写成
 `addTrack` / `removeTrack` 这种幂等的形式。
+样式初始化后一次挂齐数据源与图层，避免把数据源仍在加载误判成样式未就绪；已有图层保留。
 
 **`src/track/basemap/openfreemap.json`**：取上游 `ofm.json`，**删掉 `sprite` 字段** —— 那份
 style 的 sprite 指向 MapTiler，没有 key 会 401；OpenFreeMap 不提供 sprite，本插件的图层
 也不需要图标精灵。
 
+**`src/track/basemaps.ts`**：增加 Esri World Imagery 在线卫星/航空影像底图，直接接入官方 HTTPS raster 瓦片（256 像素，ArcGIS `{z}/{y}/{x}` 顺序，请求最高层级 19，更高层级本地放大）。二维地图和 3D 沙盘显示相同影像来源署名，选择保存在现有浏览器设置中。
+
+- 来源：[World Imagery 官方项目](https://www.arcgis.com/home/item.html?id=10df2279f9684e4a9f6a7f08febac2a9)及其 [MapServer 元数据](https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer?f=pjson)。
+- 2026-10-01 核对的服务署名为 `Esri, Vantor, Earthstar Geographics, and the GIS User Community`，按 [Esri 署名要求](https://doc.arcgis.com/en/arcgis-online/reference/display-copyrights.htm)在地图/影像旁显示。
+- 在线影像不随本插件代码分发，其使用受来源条款约束；未增加原始影像瓦片的批量导出或离线缓存；动画录像包含当前地图画面，保留来源署名。
+
 **`src/track/vendor/toGeoJSON.ts`**：只改了扩展名（`.js` → `.ts`）并加 `// @ts-nocheck` ——
 它是从未标注过的 JS，在本仓的 `strict` 下每个参数都会读成隐式 `any`，而逐行加类型等于
 开始修改移植代码、以后没法对账。`gpx` / `gpxGen` 两个导出保留（本地 GPX 走原生模型，用
 不到，但删掉就要动文件内容）。
+
+**`src/track/sandbox/*`**：参考本地 Wanderer 的 Three.js 沙盘实现，将 Svelte 生命周期改为 React 调用的独立渲染器；保留实体地形、地图贴图和贴地轨迹，使用已有 `TrackPoint[]`，不接入社区或航点管理。
+
+- 区域 DEM 使用 [Mapterhorn](https://mapterhorn.com/data-access/) 的公共 Terrarium 瓦片，最大层级 12，并在沙盘中显示高程及底图署名。
+- 高程采样前确认已解码瓦片与网格覆盖，采样倍率为 1，Three.js 显示倍率为 1.25，避免重复放大。
+- 网格与贴图统一采用 Mercator 投影；轨迹按网格三角面分段贴地，避免长线段穿过山脊。
+- 地图借用过程保存并恢复二维相机、terrain 和轨迹图层；10 秒超时或取消立即恢复。
+- 渲染器按资源集合释放共享材质、纹理、几何体和监听器，并处理 GPU 上下文丢失。
+
+
+## 新增的编辑与 AI 工作流
+
+`src/track/edit.ts`、`gpx-export.ts`、`analysis.ts`、`annotations.ts`、`playback.ts`、`route-context.ts`、`src/annotations-store.ts`、`src/ai.ts` 及对应 React 界面均为本插件新写代码，使用现有 TrackPoint 协议，没有复制其他编辑器代码。
+
+- 对比了 [gpx.studio](https://github.com/gpxstudio/gpx.studio) 的手绘、分段与合并交互，以及 [Terra Draw](https://github.com/JamesLMilner/terra-draw) 的 MapLibre 编辑能力。实现选择复用当前 MapLibre：每个编辑点保留原元组索引，拖动一次仅提交一次草稿操作，避免引入第二套地图与存储结构。
+- 新 GPX 使用 GPX 1.1，缺失海拔/时间省略，名称作 XML 转义，坐标输出 xs:decimal；用户导入原文件保持原字节。
+- SVG 交互镜头使用 [Panzoom](https://github.com/timmywil/panzoom)（`@panzoom/panzoom@4.6.2`，MIT），通过外层 CSS 变换提供自由平移、缩放与触控手势；镜头位置不写入标注数据或导出的 SVG。
+- SVG 是自包含的本地示意画布；点位标签转义，图片仅接收本地 PNG/JPEG 数据，不使用外部图片 URL 或可执行 SVG。用户上传照片经 Canvas 处理后保存为 JPEG。
+- 路线分析和镜头脚本通过可选宿主 `dsnAccount` 服务的 `fetchAi('/v1/chat/completions', ...)` 调用所选模型，限定输入大小和结构化输出，60 秒超时，可取消；插件不存储账号密钥。镜头脚本只接受全景、跟随、点位聚焦，索引和总时长均校验。
+- 图片美化通过现有 `cqai-dsh-plugin-imagegen` 的同源目录和任务 API，仅允许当前所选带照片轨迹标注点；直接使用该点本地照片作为参考图，任务保存提交时的点位名称，不绕过宿主账号与任务管理。
+- 录像使用浏览器 Canvas captureStream 与 MediaRecorder，烧入来源署名；播放路径采用累积测地距离插值，二分定位，不修改原始坐标，也不请求实时定位。
+- 上游海拔剖面适配增加缺失海拔断线和有限时间检查，避免编辑点的空海拔被当作海平面或将空时间解析为 1970 年。
+- 界面直接消费 DSH 的 `--dsw-alias-*`、字号与圆角变量；`src/client/theme.ts` 解析 Canvas 所需颜色并观察宿主主题更新。海拔图在同一实例内更新色彩和字体，保留缩放与数据，并隔离上游构造器对 Chart.js 全局字号的修改。
+## 地图源与录制接口扩展
+
+- 新增版本化浏览器设置与参数化高程提供方，保留 OpenFreeMap / OpenTopoMap / Esri，接入 OpenStreetMap 标准瓦片、MapTiler v4 样式与 Terrain RGB；真实来源署名及 MapTiler Logo 随地图、沙盘与 WebM 显示。OSM 公共瓦片只用于可见交互地图，不用于沙盘的离屏纹理采样。
+- 沙盘改为独立采样、质量预算与真实米制网格；轨迹按三角面贴地并保留分段与急弯。光影采用可调 Three.js 灯光与模型边界适配的阴影范围，静止后停止持续渲染。
+- `src/track/map-terrain.ts`、`map-settings.ts` 和 `frame-renderer.ts` 为新增第一方模块。录制候选的仓库、许可证、适配范围及推荐见 [地图录制调研](docs/map-recording-options.md)；本期只准备帧接口，没有引入这些候选的源码或依赖。
 
 ## 没移植的部分
 
@@ -103,5 +146,33 @@ AGPL-3.0 的传染性不区分「这是上游文件」还是「这是包含了�
 `src/track/vendor/toGeoJSON.ts` 那一个文件来自 ISC 许可的 `@tmcw/togeojson`，比 AGPL 更
 宽松，放在 AGPL 的程序里没有冲突。
 
-第三方 npm 依赖（`maplibre-gl` BSD-3-Clause、`chart.js` / `chartjs-plugin-zoom` /
-`chartjs-plugin-crosshair` MIT）与移植代码无关，各自保留原许可证。
+第三方 npm 依赖（`maplibre-gl` BSD-3-Clause、`three` MIT、`chart.js` / `chartjs-plugin-zoom` /
+`chartjs-plugin-crosshair` / `@panzoom/panzoom` MIT）与移植代码无关，各自保留原许可证。
+
+
+## Panzoom MIT 许可声明
+
+以下声明随包含 Panzoom 的插件分发：
+
+```text
+Copyright 2016-2019 Timmy Willison
+
+Permission is hereby granted, free of charge, to any person obtaining
+a copy of this software and associated documentation files (the
+"Software"), to deal in the Software without restriction, including
+without limitation the rights to use, copy, modify, merge, publish,
+distribute, sublicense, and/or sell copies of the Software, and to
+permit persons to whom the Software is furnished to do so, subject to
+the following conditions:
+
+The above copyright notice and this permission notice shall be
+included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
+LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+```

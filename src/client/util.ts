@@ -6,23 +6,28 @@
  * pure parts (`clipboardSafeName`, `pageUrl`) without a document.
  */
 import { API } from '../protocol.ts'
-import { DEFAULT_BASEMAP, type BasemapId } from '../track/basemaps.ts'
+import type { BasemapId } from '../track/basemaps.ts'
+import { readMapSettings, writeMapSettings } from '../track/map-settings.ts'
 
 /**
  * The host half's store. Non-GET writes carry the plugin's own header: the
  * host refuses a write without it (see `permitted()`), which is what keeps a
  * page on another origin from pushing files into the local store.
  */
-export async function api<T>(action: string, data?: unknown): Promise<T> {
+export async function api<T>(action: string, data?: unknown, method: 'POST' | 'DELETE' = 'POST'): Promise<T> {
   const options: RequestInit = data === undefined
     ? {}
-    : {method: 'POST', headers: {'content-type': 'application/json', 'x-cqai-track': '1'}, body: JSON.stringify(data)}
+    : {method, headers: {'content-type': 'application/json', 'x-cqai-track': '1'}, body: JSON.stringify(data)}
   const response = await fetch(`${API}/${action}`, options)
   if (!response.headers.get('content-type')?.includes('application/json')) {
     throw new Error('轨迹服务暂未就绪，请稍候或重启应用')
   }
   const result = await response.json()
-  if (!response.ok) throw new Error(result.error || '请求失败')
+  if (!response.ok) {
+    const error = new Error(result.error || '请求失败') as Error & {status: number}
+    error.status = response.status
+    throw error
+  }
   return result as T
 }
 
@@ -59,23 +64,6 @@ export function clipboardSafeName(name: string): string {
   return cleaned.slice(0, 80) || '轨迹'
 }
 
-/** The basemap the panel opens on. Kept per-browser; a bad value falls back. */
-export function readBasemap(): BasemapId {
-  try {
-    const stored = localStorage.getItem(BASEMAP_KEY)
-    if (stored === 'vector' || stored === 'terrain' || stored === 'none') return stored
-  } catch {
-    // Storage can be refused outright; the default is a fine answer.
-  }
-  return DEFAULT_BASEMAP
-}
-
-export function writeBasemap(basemap: BasemapId): void {
-  try {
-    localStorage.setItem(BASEMAP_KEY, basemap)
-  } catch {
-    // Remembering the choice is a convenience, not a promise.
-  }
-}
-
-const BASEMAP_KEY = 'cqai-track.basemap'
+/** Compatibility helpers delegate to the complete versioned preference. */
+export function readBasemap(): BasemapId {return readMapSettings().basemap}
+export function writeBasemap(basemap: BasemapId): void {writeMapSettings({...readMapSettings(), basemap})}

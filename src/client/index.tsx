@@ -12,6 +12,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { MainPanelId } from '@deepseek-ai/dsh-client-ui-layout/client'
 import { TrackIcon, TrackPanel } from './TrackPanel.tsx'
+import type { TrackAgentServices } from './track-agent-session.ts'
 
 export const inject = ['slots']
 
@@ -19,7 +20,12 @@ export const inject = ['slots']
 const PANEL = 'cqai-track' as MainPanelId
 
 export function apply(ctx: Context): void {
-  ctx.slots.inject('main', () => ctx.slots.register({name: 'main', key: PANEL}, TrackPanel))
+  const getAgentServices = (): TrackAgentServices | undefined => {
+    const sessions = ctx.get('sessions'), workspaces = ctx.get('workspaces'), uiWorkspace = ctx.get('uiWorkspace'), layout = ctx.get('layout')
+    if (!sessions || !workspaces || !uiWorkspace || !layout) return undefined
+    return {sessions, workspaces, uiWorkspace, layout} as unknown as TrackAgentServices
+  }
+  ctx.slots.inject('main', () => ctx.slots.register({name: 'main', key: PANEL}, () => <TrackPanel getAgentServices={getAgentServices} />))
   // 43 sits after e剪宝 (41) and 一稿多发 (42): the three are one family and read
   // in the order the work happens — cut, publish, then go look at the ride.
   ctx.slots.inject('sidebar.panellist', () => ctx.slots.register(

@@ -7,6 +7,8 @@
  */
 
 export const API = '/api/cqai-track'
+/** Bump when imported statistics need to be recalculated from the retained source. */
+export const METRICS_VERSION = 2
 
 /** Track files the panel accepts, keyed by the extension it dispatches on. */
 export const TRACK_EXTENSIONS = ['gpx', 'kml', 'tcx'] as const
@@ -25,6 +27,40 @@ export type TrackExtension = typeof TRACK_EXTENSIONS[number]
  */
 export type TrackPoint = [number, number, number | null, number | null]
 
+/** A stable attachment distinguishing repeated visits along a route. */
+export interface RoutePosition {startIndex: number; endIndex: number; fraction: number}
+export type PlacemarkTimeSource = 'track' | 'estimated' | 'unknown'
+
+/** KML locations are independent from the measured track path. */
+export interface TrackPlacemark {
+  id: string
+  name: string
+  coordinates: [number, number]
+  description: string
+  images: string[]
+  /** Selected point types; older records keep one string. Empty text or [] clears them. */
+  type?: string | string[]
+  /** Hidden points retain their identity and data so they can be shown again. */
+  hidden?: boolean
+  /** Metres from this point's KML coordinates; absent on older records. */
+  elevation?: number | null
+  /** This point's own TimeStamp, as epoch milliseconds; absent on older records. */
+  time?: number | null
+  routePosition?: RoutePosition
+  timeSource?: PlacemarkTimeSource
+}
+
+/** A local presentation group references original points without changing them. */
+export interface PlacemarkGroup {
+  id: string
+  name: string
+  description: string
+  memberIds: string[]
+  coordinates: [number, number]
+  cover?: {pointId: string; imageUrl: string}
+  hidden?: boolean
+}
+
 /** What the panel computes once, at import, and the list view reads back. */
 export interface TrackMetrics {
   /** Total length along the path, in metres. */
@@ -33,8 +69,10 @@ export interface TrackMetrics {
   elevationGain: number
   /** Cumulative negative elevation change, in metres. */
   elevationLoss: number
-  /** Milliseconds between the first and last timestamped point. */
+  /** Elapsed milliseconds from recorded point times or an explicit file summary. */
   duration: number
+  /** Absent in records imported before the current calculation method. */
+  calculationVersion?: number
   /** Largest elevation seen, in metres, or null when the track has none. */
   elevationMax: number | null
   /** Smallest elevation seen, in metres, or null when the track has none. */
@@ -47,7 +85,7 @@ export interface TrackMetrics {
 export interface TrackSummary {
   /** Stable local id, also the directory name under `<DSH home>/track`. */
   id: string
-  /** Track name from the file's metadata, or the file's own name. */
+  /** Imported filename stem, or a user-supplied title for edited/new tracks. */
   name: string
   /** Original filename as the user picked it. */
   filename: string
@@ -67,6 +105,9 @@ export interface TrackSummary {
 export interface TrackRecord extends TrackSummary {
   /** The path, in storage form. */
   coordinates: TrackPoint[]
+  placemarks?: TrackPlacemark[]
+  /** First point of each connected part; omitted on legacy imports. */
+  segmentStarts?: number[]
 }
 
 /**
@@ -83,6 +124,9 @@ export interface TrackInput {
   source: string
   /** The parsed path. */
   points: TrackPoint[]
+  placemarks?: TrackPlacemark[]
+  /** First point of each connected part; omitted on legacy imports. */
+  segmentStarts?: number[]
   /** Statistics the panel already computed. */
   metrics: TrackMetrics
 }

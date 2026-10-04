@@ -42,13 +42,17 @@ const CLIENT_EXTERNALS: readonly string[] = [
 ]
 
 /** Third-party libraries and subpaths the client bundle carries itself. */
-const CLIENT_INLINED: readonly string[] = [
+const CLIENT_INLINED: readonly (string | RegExp)[] = [
+  '@panzoom/panzoom',
+  'three',
+  /^three\//,
   'maplibre-gl',
   'maplibre-gl/dist/maplibre-gl.css',
   'chart.js',
   'chart.js/helpers',
   'chartjs-plugin-zoom',
   'chartjs-plugin-crosshair',
+  'chartjs-plugin-crosshair/dist/chartjs-plugin-crosshair.esm.js',
 ]
 
 const CSS_VIRTUAL_PREFIX = '\0dsh-css-raw:'
@@ -67,7 +71,7 @@ const nodeConfig: UserConfig = {
   dts: false,
   clean: false,
   outputOptions: {entryFileNames: '[name].js'},
-  deps: {neverBundle: [/^@deepseek-ai\//]},
+  deps: {neverBundle: [/^@deepseek-ai\//, 'sharp']},
 }
 
 const clientConfig: UserConfig = {

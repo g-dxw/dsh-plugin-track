@@ -16,22 +16,26 @@
  * 文件" tells the user which file to go and look at; "导入失败" does not.
  */
 import GPX from './model/gpx.ts'
+import {parseGpxXml} from './model/gpx-xml.ts'
 import type Waypoint from './model/waypoint.ts'
 import { flattenGeoJSON } from './geometry.ts'
-import { pointMetrics, type PointMetrics } from './metrics.ts'
+import { pointMetrics } from './metrics.ts'
 import { kml, tcx } from './vendor/toGeoJSON.ts'
+import { parseKmlPlacemarks } from './placemarks.ts'
 import {
-  extensionOf, UPLOADS, validateUpload,
-  type TrackExtension, type TrackPoint,
+  extensionOf, METRICS_VERSION, UPLOADS, validateUpload,
+  type TrackExtension, type TrackPoint, type TrackPlacemark, type TrackMetrics,
 } from '../protocol.ts'
 
 export interface ParsedTrack {
-  /** Name from the file's own metadata, or `''` when it carries none. */
+  /** Default imported title: the filename without its final extension. */
   name: string
   /** Lowercase extension this was parsed as. */
   format: TrackExtension
   points: TrackPoint[]
-  metrics: PointMetrics
+  segmentStarts: number[]
+  placemarks?: TrackPlacemark[]
+  metrics: TrackMetrics
 }
 
 /** The label the user sees for each format, in error messages. */
@@ -60,7 +64,7 @@ function pointOf(waypoint: Waypoint): TrackPoint | null {
   const lon = waypoint.$.lon
   const lat = waypoint.$.lat
   if (typeof lon !== 'number' || typeof lat !== 'number') return null
-  if (!Number.isFinite(lon) || !Number.isFinite(lat)) return null
+  if (!Number.isFinite(lon) || !Number.isFinite(lat) || Math.abs(lon) > 180 || Math.abs(lat) > 90) return null
   const elevation = typeof waypoint.ele === 'number' && Number.isFinite(waypoint.ele) ? waypoint.ele : null
   const time = waypoint.time instanceof Date && Number.isFinite(waypoint.time.getTime())
     ? waypoint.time.getTime()
@@ -68,40 +72,90 @@ function pointOf(waypoint: Waypoint): TrackPoint | null {
   return [lon, lat, elevation, time]
 }
 
-/** Document name: the metadata block first, then the first track's own name. */
-function nameOfGpx(gpx: GPX): string {
-  const candidates: unknown[] = [gpx.metadata?.name, ...(gpx.trk ?? []).map(track => track.name)]
-  for (const candidate of candidates) {
-    if (typeof candidate === 'string' && candidate.trim()) return candidate.trim()
-    if (typeof candidate === 'number' && Number.isFinite(candidate)) return String(candidate)
-  }
-  return ''
-}
-
-function parseGpx(source: string): Pick<ParsedTrack, 'name' | 'points'> {
-  const gpx = GPX.parse(source)
-  const points: TrackPoint[] = []
-  for (const waypoint of gpx.flatten()) {
-    const point = pointOf(waypoint)
-    if (point) points.push(point)
+function parseGpx(source: string): {points: TrackPoint[]; segmentStarts: number[]} {
+  const object = parseGpxXml(source)
+  // Bare empty line elements read as undefined, which the native model cannot construct.
+  // Keep empty fixes as invalid slots so the next valid fix starts a separate run.
+  const list = (value: any): any[] => Array.isArray(value) ? value : value ? [value] : []
+  object.trk = list(object.trk).filter(track => track && typeof track === 'object').map(track => ({...track,
+    trkseg: list(track.trkseg).filter(segment => segment && typeof segment === 'object').map(segment => ({...segment,
+      trkpt: list(segment.trkpt).map(point => point && typeof point.$?.lon === 'number' && typeof point.$?.lat === 'number'
+        && Number.isFinite(point.$.lon) && Number.isFinite(point.$.lat)
+        ? point : {$: {lon: Infinity, lat: Infinity}}),
+    })),
+  }))
+  const gpx = GPX.fromObject(object)
+  const points: TrackPoint[] = [], segmentStarts: number[] = []
+  for (const track of gpx.trk || []) {
+    for (const segment of track.trkseg || []) {
+      let newRun = true
+      for (const waypoint of segment.trkpt || []) {
+        const point = pointOf(waypoint)
+        if (!point) {newRun = true; continue}
+        if (newRun) segmentStarts.push(points.length)
+        newRun = false
+        points.push(point)
+      }
+    }
   }
   if (!points.length && !gpx.trk?.length && !gpx.rte?.length && !gpx.wpt?.length) {
     throw new Error('这不是 GPX 轨迹文件：文件里没有 <trk>、<rte> 或 <wpt>')
   }
-  return {name: nameOfGpx(gpx), points}
+  return {points, segmentStarts}
 }
 
 /** KML and TCX share the vendored reader and its `[lon, lat, ele]` ordering. */
-function parseViaGeoJson(source: string, format: 'kml' | 'tcx'): Pick<ParsedTrack, 'name' | 'points'> {
+function parseViaGeoJson(source: string, format: 'kml' | 'tcx'): {points: TrackPoint[]; segmentStarts: number[]; duration: number} {
   const label = FORMAT_LABEL[format]
   const document = readXml(source, label)
-  const root = document.documentElement.nodeName.toLowerCase()
+  const root = document.documentElement.localName.toLowerCase()
   if (format === 'kml' && root !== 'kml') throw new Error('不是合法的 KML 文件：缺少 <kml> 根元素')
   if (format === 'tcx' && root !== 'trainingcenterdatabase') {
     throw new Error('不是合法的 TCX 文件：缺少 <TrainingCenterDatabase> 根元素')
   }
-  const flattened = flattenGeoJSON(format === 'kml' ? kml(document) : tcx(document))
-  return {name: flattened.name, points: flattened.points}
+  const {points, segmentStarts} = flattenGeoJSON(format === 'kml' ? kml(document) : tcx(document))
+  return {points, segmentStarts,
+    duration: format === 'kml' ? kmlSummaryDuration(document) : 0}
+}
+
+/** Only explicit, unit-qualified summary fields describe elapsed route time.
+ * Placemark timestamps and KML TimeSpan describe display validity/photos and
+ * must not manufacture timestamps for an otherwise untimed route.
+ */
+function kmlSummaryDuration(document: Document): number {
+  const scopes = Array.from(document.getElementsByTagName('*'))
+    .filter(element => element.localName === 'Document')
+  for (const scope of scopes) {
+    const fields = new Map<string, string>()
+    for (const extended of Array.from(scope.children).filter(child => child.localName === 'ExtendedData')) {
+      for (const field of Array.from(extended.getElementsByTagName('*'))) {
+        if (field.localName !== 'Data' && field.localName !== 'SimpleData') continue
+        const name = field.getAttribute('name')
+        const value = field.localName === 'Data'
+          ? Array.from(field.children).find(child => child.localName === 'value')?.textContent
+          : field.textContent
+        if (name && value?.trim()) fields.set(name, value.trim())
+      }
+    }
+    const positive = (name: string, multiplier = 1): number => {
+      const value = fields.get(name)
+      const parsed = value === undefined ? 0 : Number(value) * multiplier
+      return Number.isFinite(parsed) && parsed > 0 ? parsed : 0
+    }
+    const duration = positive('TimeUsed') || positive('duration_seconds', 1000)
+    if (duration) return duration
+    const begin = positive('BeginTime')
+    const end = positive('EndTime')
+    if (begin && end > begin) return end - begin
+    const startIso = fields.get('start_time')
+    const endIso = fields.get('end_time')
+    // Date-only labels are not recorded start/end times.
+    if (startIso?.includes('T') && endIso?.includes('T')) {
+      const elapsed = Date.parse(endIso) - Date.parse(startIso)
+      if (Number.isFinite(elapsed) && elapsed > 0) return elapsed
+    }
+  }
+  return 0
 }
 
 /**
@@ -114,12 +168,16 @@ export function parseTrackFile(filename: string, source: string): ParsedTrack {
   if (problem) throw new Error(problem)
 
   const format = extensionOf(filename) as TrackExtension
-  const {name, points} = format === 'gpx' ? parseGpx(source) : parseViaGeoJson(source, format)
+  const parsed = format === 'gpx' ? {...parseGpx(source), duration: 0} : parseViaGeoJson(source, format)
+  const {points} = parsed
+  const name = filename.trim().replace(/\.[^.]+$/u, '').trim() || filename.trim()
 
   if (!points.length) throw new Error(`${FORMAT_LABEL[format]} 文件里没有可用的坐标点`)
   if (points.length > UPLOADS.maxPoints) {
     throw new Error(`轨迹点过多（${points.length}），上限 ${UPLOADS.maxPoints}`)
   }
 
-  return {name, format, points, metrics: pointMetrics(points)}
+  const metrics: TrackMetrics = {...pointMetrics(points), calculationVersion: METRICS_VERSION}
+  if (!metrics.duration) metrics.duration = parsed.duration
+  return {name, format, points, segmentStarts: parsed.segmentStarts, metrics, ...(format === 'kml' ? {placemarks: parseKmlPlacemarks(source)} : {})}
 }
