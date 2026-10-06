@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ensureTrackAgentSession, type TrackAgentServices } from './track-agent-session.ts'
+import { ensureTrackAgentSession, type TrackAgentServices, type TrackAgentSession } from './track-agent-session.ts'
 import { trackAgentSummary, type TrackAgentSummary, type TrackAgentViewContext } from '../track-agent-context.ts'
 import { api as defaultApi } from './util.ts'
+import {TrackAgentProjectRetentions} from './track-agent-projects.ts'
 
 export const TRACK_AGENT_DRAWER_EVENT = 'dsh-desktop-agent-drawer'
 export const TRACK_AGENT_CAPABILITIES_EVENT = 'dsh-desktop-agent-drawer-capabilities'
 const PANEL = 'cqai-track'
+const trackScope = (context: TrackAgentViewContext) => context.page === 'library' || context.page === 'new' ? null : context.track?.id ?? null
+const drawerEntity = (trackId: string | null) => trackId ?? 'track-library'
 interface DrawerRequest {open: boolean; panelId: string; entityId?: string; requestId?: string; title?: string; side?: 'left'; mode?: 'simple'; summary?: TrackAgentSummary}
 export type TrackAgentServicesReader = () => TrackAgentServices | undefined
 
@@ -25,18 +28,21 @@ export function useTrackAgentDrawer(context: TrackAgentViewContext, getServices?
   const reader = useRef(getServices); reader.current = getServices
   const active = useRef<DrawerRequest | null>(null), pending = useRef<AbortController | null>(null)
   const generation = useRef(0), mounted = useRef(true)
-  // Serialize writes and take the latest context when each queued write begins.
-  const contextWrites = useRef<Promise<void>>(Promise.resolve())
+  const retainedProjects = useRef(new TrackAgentProjectRetentions())
+  // Capture each write scope: a delayed A write must never update B's project.
+  const contextWrites = useRef(new Map<string | null, Promise<void>>())
+  const scopeId = trackScope(context), previousScope = useRef(scopeId)
   const contextKey = JSON.stringify([context.page, context.trackCount, context.track?.id, context.track?.name, context.track?.filename, context.track?.points, context.track?.metrics, context.library?.map(track => [track.id, track.name, track.filename, track.points, track.metrics])])
   const latestKey = useRef(contextKey); latestKey.current = contextKey
-  const syncContext = useCallback(() => {
-    const next = contextWrites.current.catch(() => {}).then(async () => {
+  const syncContext = useCallback((snapshot = current.current) => {
+    const input = {page: snapshot.page, trackId: trackScope(snapshot)}
+    const previous = contextWrites.current.get(input.trackId) ?? Promise.resolve()
+    const next = previous.catch(() => {}).then(async () => {
       if (!mounted.current) return
-      const latest = current.current
       const api = reader.current?.()?.api ?? defaultApi
-      await api('agent-context', {page: latest.page, trackId: latest.track?.id ?? null})
+      await api('agent-context', input)
     })
-    contextWrites.current = next
+    contextWrites.current.set(input.trackId, next)
     return next
   }, [])
 
@@ -71,6 +77,7 @@ export function useTrackAgentDrawer(context: TrackAgentViewContext, getServices?
       window.removeEventListener(TRACK_AGENT_DRAWER_EVENT, onRequest)
       generation.current += 1
       pending.current?.abort()
+      retainedProjects.current.releaseAll()
       const request = active.current; active.current = null
       if (request) window.dispatchEvent(new CustomEvent(TRACK_AGENT_DRAWER_EVENT, {detail: {...request, open: false}}))
     }
@@ -78,7 +85,7 @@ export function useTrackAgentDrawer(context: TrackAgentViewContext, getServices?
 
   useEffect(() => {
     const request = active.current
-    if (!request) return
+    if (!request || request.entityId !== drawerEntity(trackScope(current.current))) return
     const updated = {...request, summary: trackAgentSummary(current.current)}
     active.current = updated
     window.dispatchEvent(new CustomEvent(TRACK_AGENT_DRAWER_EVENT, {detail: updated}))
@@ -90,40 +97,63 @@ export function useTrackAgentDrawer(context: TrackAgentViewContext, getServices?
     })
   }, [contextKey, syncContext])
 
-  const toggle = useCallback(async () => {
-    if (active.current) {close(); return}
-    if (busy || pending.current) return
+  const show = useCallback(async (signal?: AbortSignal): Promise<TrackAgentSession | undefined> => {
+    if (signal?.aborted) return
+    if (pending.current) return
     const services = reader.current?.()
     if (!services || !trackAgentDrawerAvailable()) {
       setError('当前布局暂不支持左侧 Agent 对话，请更新并重新启动 Desktop。')
       return
     }
+    const targetScope = trackScope(current.current)
     const ticket = ++generation.current, controller = new AbortController()
+    const cancel = () => controller.abort()
+    signal?.addEventListener('abort', cancel, {once: true})
     pending.current = controller
     setBusy(true); setError('')
     try {
-      await ensureTrackAgentSession(services, controller.signal)
+      const session = await ensureTrackAgentSession(services, controller.signal, targetScope)
       if (controller.signal.aborted || generation.current !== ticket) return
-      // A route may change during preparation: publish only the freshest scope.
+      await retainedProjects.current.hold(services.sessions, session.sessionId, controller.signal)
+      if (controller.signal.aborted || generation.current !== ticket) return
+      // Pages in one project may change while opening; a different project cancels this opener.
       let written: string
       do {
+        if (trackScope(current.current) !== targetScope) return
         written = latestKey.current
-        await syncContext()
+        await syncContext(current.current)
         if (controller.signal.aborted || generation.current !== ticket) return
       } while (written !== latestKey.current)
+      if (trackScope(current.current) !== targetScope) return
       const request: DrawerRequest = {
-        open: true, panelId: PANEL, entityId: 'track-library', requestId: crypto.randomUUID(),
+        open: true, panelId: PANEL, entityId: drawerEntity(targetScope), requestId: active.current?.requestId ?? crypto.randomUUID(),
         title: 'Agent · 轨迹助手', side: 'left', mode: 'simple', summary: trackAgentSummary(current.current),
       }
       active.current = request
       window.dispatchEvent(new CustomEvent(TRACK_AGENT_DRAWER_EVENT, {detail: request}))
       setOpen(true)
+      return session
     } catch (reason) {
       if (mounted.current && generation.current === ticket && !controller.signal.aborted) setError(reason instanceof Error ? reason.message : 'Agent 对话打开失败，请重试。')
     } finally {
+      signal?.removeEventListener('abort', cancel)
       if (mounted.current && generation.current === ticket) {pending.current = null; setBusy(false)}
     }
-  }, [busy, close, syncContext])
+  }, [syncContext])
 
-  return {available, open, busy, error, toggle, close}
+  useEffect(() => {
+    if (previousScope.current === scopeId) return
+    previousScope.current = scopeId
+    const reopen = !!active.current || !!pending.current
+    // Native sessions keep their own history and drafts; only the drawer changes its project.
+    close()
+    if (reopen) void show()
+  }, [scopeId, close, show])
+
+  const toggle = useCallback(async () => {
+    if (active.current) {close(); return}
+    await show()
+  }, [close, show])
+
+  return {available, open, busy, error, toggle, show, close}
 }

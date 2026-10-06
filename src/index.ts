@@ -3,7 +3,7 @@ import type {} from '@deepseek-ai/dsh-host-webserver'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { UPLOADS, API, validateUpload, type TrackInput, type TrackMetrics, type TrackPoint } from './protocol.ts'
 import { listTracks, readSource, readTrack, removeTrack, writeTrack, writeTrackBatch } from './artifacts.ts'
-import { ensureTrackAgentWorkspace, saveTrackAgentSession, writeTrackAgentContext } from './track-agent-store.ts'
+import { ensureTrackAgentWorkspace, saveTrackAgentSession, writeTrackAgentContext, TrackAgentStoreError } from './track-agent-store.ts'
 
 import { annotationsSaved, readAnnotations, readArtLayout, readArtRouteTransform, writeAnnotations } from './annotations-store.ts'
 import { readPlacemarkOrder, writePlacemarkOrder } from './placemark-order-store.ts'
@@ -132,12 +132,14 @@ export function apply(ctx: Context): void {
         const action = url.pathname.slice(API.length + 1)
         const id = url.searchParams.get('id') ?? ''
         if (req.method === 'POST' && action === 'agent-workspace') {
-          await readJson(req)
-          return json(res, 200, ensureTrackAgentWorkspace())
+          const body = await readJson(req) as {trackId?: string | null}
+          if (!body || typeof body !== 'object' || Array.isArray(body)) throw new TrackAgentStoreError('Agent 工作区请求格式无效')
+          return json(res, 200, ensureTrackAgentWorkspace(process.env, body.trackId))
         }
         if (req.method === 'POST' && action === 'agent-session') {
-          const body = await readJson(req) as {sessionId?: unknown}
-          return json(res, 200, saveTrackAgentSession(body?.sessionId))
+          const body = await readJson(req) as {sessionId?: unknown; trackId?: string | null}
+          if (!body || typeof body !== 'object' || Array.isArray(body)) throw new TrackAgentStoreError('Agent 会话请求格式无效')
+          return json(res, 200, saveTrackAgentSession(body.sessionId, process.env, body.trackId))
         }
         if (req.method === 'POST' && action === 'agent-context') {
           return json(res, 200, writeTrackAgentContext(await readJson(req)))
@@ -278,7 +280,7 @@ export function apply(ctx: Context): void {
         json(res, 404, {error: '接口不存在'})
       } catch (error) {
         if (error instanceof PlacemarkPhotoError && error.status === 413) res.setHeader('connection', 'close')
-        if (!res.headersSent && !res.destroyed) json(res, error instanceof TrackAIError || error instanceof PlacemarkStateConflictError || error instanceof PlacemarkPhotoError ? error.status : 400, {error: error instanceof Error ? error.message : '操作失败'})
+        if (!res.headersSent && !res.destroyed) json(res, error instanceof TrackAIError || error instanceof PlacemarkStateConflictError || error instanceof PlacemarkPhotoError || error instanceof TrackAgentStoreError ? error.status : 400, {error: error instanceof Error ? error.message : '操作失败'})
       }
     }})
     return () => {unregister()}

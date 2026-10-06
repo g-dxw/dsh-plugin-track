@@ -28,6 +28,7 @@ function fixture(options: { linked?: string | null; automaticMembership?: boolea
   const catalog = source<SessionCatalog>({ phase: 'ready', ids: [], byId: {} })
   const workspaces = source<WorkspaceCatalog>({ phase: 'ready', state: 'idle', items: [], archivedSessionIds: [] })
   const linked = { sessionId: options.linked ?? null }
+  const trackBindings = new Map<string, string>()
   const order: string[] = []
   const addSession = (sessionId: string, workspaceId: string, associate = true) => {
     catalog.set({ ...catalog.getSnapshot(), ids: [...catalog.getSnapshot().ids, sessionId],
@@ -36,9 +37,16 @@ function fixture(options: { linked?: string | null; automaticMembership?: boolea
       item.workspaceId === workspaceId ? { ...item, sessionIds: [...item.sessionIds, sessionId] } : item) })
   }
   const api = vi.fn(async (action: string, data: unknown): Promise<unknown> => {
-    const input = data as { sessionId?: string }
-    if (action === 'agent-workspace') return { path: '/agents/track', sessionId: linked.sessionId }
-    if (action === 'agent-session') { linked.sessionId = input.sessionId!; order.push('save:' + input.sessionId); return { sessionId: input.sessionId } }
+    const input = data as { sessionId?: string; trackId?: string | null }
+    if (action === 'agent-workspace') return input.trackId == null
+      ? { path: '/agents/track', sessionId: linked.sessionId }
+      : { path: '/agents/tracks/' + input.trackId, sessionId: trackBindings.get(input.trackId) ?? null }
+    if (action === 'agent-session') {
+      if (input.trackId == null) linked.sessionId = input.sessionId!
+      else trackBindings.set(input.trackId, input.sessionId!)
+      order.push('save:' + input.sessionId)
+      return { sessionId: input.sessionId }
+    }
     throw new Error('unexpected endpoint ' + action)
   })
   const createWorkspace = vi.fn(async ({ path }: { path: string }) => {
@@ -62,7 +70,7 @@ function fixture(options: { linked?: string | null; automaticMembership?: boolea
     uiWorkspace: { openSession }, layout: { selectPanel },
     api: api as NonNullable<TrackAgentServices['api']>,
   }
-  return { services, catalog, workspaces, linked, api, createWorkspace, createSession, addSession, openSession, selectPanel, order }
+  return { services, catalog, workspaces, linked, trackBindings, api, createWorkspace, createSession, addSession, openSession, selectPanel, order }
 }
 
 afterEach(() => { vi.useRealTimers() })
@@ -74,10 +82,33 @@ describe('track native Agent Session', () => {
     expect(f.createWorkspace).toHaveBeenCalledWith({ path: '/agents/track' })
     expect(f.createSession).toHaveBeenCalledWith({ workspaceId: 'workspace-track' })
     expect(f.order).toEqual(['save:session-workspace-track', 'open:session-workspace-track', 'panel:cqai-track'])
-    expect(f.api.mock.calls).toEqual([['agent-workspace', {}], ['agent-session', {sessionId: 'session-workspace-track'}]])
+    expect(f.api.mock.calls).toEqual([['agent-workspace', { trackId: null }], ['agent-session', { sessionId: 'session-workspace-track', trackId: null }]])
     expect(f.catalog.subscriberCount + f.workspaces.subscriberCount).toBe(0)
   })
 
+  it('opens route information as a full native conversation without returning to Track or altering the composer', async () => {
+    const f = fixture()
+    const composer = {input: {for: vi.fn(() => ({addAttachments: vi.fn(() => true)}))}, createDrafts: vi.fn(() => []), releaseDraftAttachments: vi.fn(), send: vi.fn()}
+    const services: TrackAgentServices & {conversation: typeof composer} = {...f.services, conversation: composer}
+    const opened = await ensureTrackAgentSession(services, undefined, 'track-A', {presentation: 'conversation'})
+    expect(opened).toEqual({sessionId: 'session-workspace-track-A', workspaceId: 'workspace-track-A'})
+    expect(f.order).toEqual(['save:session-workspace-track-A', 'open:session-workspace-track-A'])
+    expect(f.selectPanel).not.toHaveBeenCalled()
+    expect(f.api.mock.calls).toEqual([['agent-workspace', {trackId: 'track-A'}], ['agent-session', {sessionId: opened.sessionId, trackId: 'track-A'}]])
+    expect(composer.input.for).not.toHaveBeenCalled(); expect(composer.createDrafts).not.toHaveBeenCalled(); expect(composer.send).not.toHaveBeenCalled()
+    expect(f.catalog.subscriberCount + f.workspaces.subscriberCount).toBe(0)
+  })
+
+  it('reuses the route conversation across drawer and full conversation presentation', async () => {
+    const f = fixture()
+    const drawer = await ensureTrackAgentSession(f.services, undefined, 'track-A')
+    f.selectPanel.mockClear()
+    expect(await ensureTrackAgentSession(f.services, undefined, 'track-A', {presentation: 'conversation'})).toEqual(drawer)
+    expect(f.createSession).toHaveBeenCalledOnce()
+    expect(f.openSession.mock.calls).toEqual([[drawer.sessionId], [drawer.sessionId]])
+    expect(f.selectPanel).not.toHaveBeenCalled()
+    expect(f.trackBindings.get('track-A')).toBe(drawer.sessionId)
+  })
   it('reuses the fixed native conversation on reopen', async () => {
     const f = fixture()
     await ensureTrackAgentSession(f.services)
@@ -295,5 +326,127 @@ describe('track native Agent Session', () => {
     gate.resolve()
     await failed
     expect(f.openSession).not.toHaveBeenCalled()
+  })
+  it('keeps A and B in separate projects and reuses A when returning from B', async () => {
+    const f = fixture()
+    const a = await ensureTrackAgentSession(f.services, undefined, 'track-A')
+    const b = await ensureTrackAgentSession(f.services, undefined, 'track-B')
+    const returnedA = await ensureTrackAgentSession(f.services, undefined, 'track-A')
+    expect(a).toEqual({ sessionId: 'session-workspace-track-A', workspaceId: 'workspace-track-A' })
+    expect(b).toEqual({ sessionId: 'session-workspace-track-B', workspaceId: 'workspace-track-B' })
+    expect(returnedA).toEqual(a)
+    expect(f.createSession).toHaveBeenCalledTimes(2)
+    expect(f.createWorkspace.mock.calls).toEqual([
+      [{ path: '/agents/tracks/track-A' }], [{ path: '/agents/tracks/track-B' }], [{ path: '/agents/tracks/track-A' }],
+    ])
+    expect(f.openSession.mock.calls).toEqual([[a.sessionId], [b.sessionId], [a.sessionId]])
+    expect(f.trackBindings).toEqual(new Map([['track-A', a.sessionId], ['track-B', b.sessionId]]))
+    expect(f.linked.sessionId).toBeNull()
+  })
+
+  it('keeps the global workspace independent from any selected track', async () => {
+    const f = fixture()
+    const global = await ensureTrackAgentSession(f.services)
+    const selected = await ensureTrackAgentSession(f.services, undefined, 'track-A')
+    expect(await ensureTrackAgentSession(f.services)).toEqual(global)
+    expect(selected.workspaceId).not.toBe(global.workspaceId)
+    expect(f.createSession).toHaveBeenCalledTimes(2)
+    expect(f.linked.sessionId).toBe(global.sessionId)
+    expect(f.trackBindings.get('track-A')).toBe(selected.sessionId)
+  })
+
+  it('deduplicates simultaneous preparation within the selected track scope', async () => {
+    const f = fixture()
+    const gate = deferred<string>()
+    f.createSession.mockImplementationOnce(() => gate.promise)
+    const first = ensureTrackAgentSession(f.services, undefined, 'track-A').catch(cause => cause as Error)
+    const latest = ensureTrackAgentSession(f.services, undefined, 'track-A')
+    await flush()
+    expect(f.createSession).toHaveBeenCalledOnce()
+    f.addSession('shared-A', 'workspace-track-A'); gate.resolve('shared-A')
+    expect(await first).toMatchObject({ name: 'AbortError' })
+    expect(await latest).toEqual({ sessionId: 'shared-A', workspaceId: 'workspace-track-A' })
+    expect(f.api.mock.calls.filter(call => call[0] === 'agent-workspace')).toEqual([
+      ['agent-workspace', { trackId: 'track-A' }],
+    ])
+    expect(f.openSession.mock.calls).toEqual([['shared-A']])
+  })
+
+  it('prepares different tracks concurrently and only activates the latest selection', async () => {
+    const f = fixture()
+    const aGate = deferred<string>()
+    const bGate = deferred<string>()
+    f.createSession.mockImplementation(({ workspaceId }) => workspaceId === 'workspace-track-A' ? aGate.promise : bGate.promise)
+    const a = ensureTrackAgentSession(f.services, undefined, 'track-A').catch(cause => cause as Error)
+    await flush()
+    const b = ensureTrackAgentSession(f.services, undefined, 'track-B')
+    await flush()
+    expect(f.createSession.mock.calls).toEqual([
+      [{ workspaceId: 'workspace-track-A' }], [{ workspaceId: 'workspace-track-B' }],
+    ])
+    f.addSession('native-B', 'workspace-track-B'); bGate.resolve('native-B')
+    expect(await b).toEqual({ sessionId: 'native-B', workspaceId: 'workspace-track-B' })
+    f.addSession('native-A', 'workspace-track-A'); aGate.resolve('native-A')
+    expect(await a).toMatchObject({ name: 'AbortError' })
+    expect(f.trackBindings).toEqual(new Map([['track-B', 'native-B'], ['track-A', 'native-A']]))
+    expect(f.api.mock.calls.filter(call => call[0] === 'agent-session')).toEqual([
+      ['agent-session', { sessionId: 'native-B', trackId: 'track-B' }],
+      ['agent-session', { sessionId: 'native-A', trackId: 'track-A' }],
+    ])
+    expect(f.openSession.mock.calls).toEqual([['native-B']])
+    expect(f.selectPanel).toHaveBeenCalledOnce()
+    expect(await ensureTrackAgentSession(f.services, undefined, 'track-A')).toMatchObject({ sessionId: 'native-A' })
+    expect(f.createSession).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not activate a cancelled track after another track opens, and retains its own binding', async () => {
+    const f = fixture()
+    const gate = deferred<string>()
+    f.createSession.mockImplementationOnce(() => gate.promise)
+    const cancellation = new AbortController()
+    const old = ensureTrackAgentSession(f.services, cancellation.signal, 'track-A').catch(cause => cause as Error)
+    await flush(); cancellation.abort()
+    const selected = await ensureTrackAgentSession(f.services, undefined, 'track-B')
+    f.addSession('late-A', 'workspace-track-A'); gate.resolve('late-A')
+    await flush()
+    expect(await old).toMatchObject({ name: 'AbortError' })
+    expect(f.openSession.mock.calls).toEqual([[selected.sessionId]])
+    expect(f.trackBindings.get('track-A')).toBe('late-A')
+    expect(f.trackBindings.get('track-B')).toBe(selected.sessionId)
+    expect(await ensureTrackAgentSession(f.services, undefined, 'track-A')).toMatchObject({ sessionId: 'late-A' })
+    expect(f.createSession).toHaveBeenCalledTimes(2)
+  })
+
+  it('reuses only the failed track candidate when binding is retried after visiting another track', async () => {
+    const f = fixture()
+    const original = f.services.api!
+    let failedA = false
+    const services: TrackAgentServices = { ...f.services, api: async <T>(action: string, data: unknown): Promise<T> => {
+      const input = data as { trackId?: string | null }
+      if (action === 'agent-session' && input.trackId === 'track-A' && !failedA) {
+        failedA = true
+        throw new Error('A binding write failed')
+      }
+      return original<T>(action, data)
+    } }
+    await expect(ensureTrackAgentSession(services, undefined, 'track-A')).rejects.toThrow('A binding write failed')
+    expect(f.trackBindings.has('track-A')).toBe(false)
+    const b = await ensureTrackAgentSession(services, undefined, 'track-B')
+    const a = await ensureTrackAgentSession(services, undefined, 'track-A')
+    expect(a).toMatchObject({ sessionId: 'session-workspace-track-A' })
+    expect(b).toMatchObject({ sessionId: 'session-workspace-track-B' })
+    expect(f.createSession).toHaveBeenCalledTimes(2)
+    expect(f.openSession.mock.calls).toEqual([[b.sessionId], [a.sessionId]])
+  })
+
+  it('rejects another track’s bound session even when it is an eligible root session', async () => {
+    const f = fixture()
+    const a = await ensureTrackAgentSession(f.services, undefined, 'track-A')
+    f.trackBindings.set('track-B', a.sessionId)
+    const b = await ensureTrackAgentSession(f.services, undefined, 'track-B')
+    expect(b).toMatchObject({ sessionId: 'session-workspace-track-B', workspaceId: 'workspace-track-B' })
+    expect(f.trackBindings.get('track-A')).toBe(a.sessionId)
+    expect(f.trackBindings.get('track-B')).toBe(b.sessionId)
+    expect(f.createSession).toHaveBeenCalledTimes(2)
   })
 })

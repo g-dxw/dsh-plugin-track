@@ -35,18 +35,18 @@ function deferred<T>() {
   const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no })
   return { promise, resolve, reject }
 }
-function session() { return {sessionId: 'track-library-session', workspaceId: 'track-library-workspace'} }
+function session(trackId: string | null = 'track-0') { const scope = trackId ?? 'track-library'; return {sessionId: scope + '-session', workspaceId: scope + '-workspace'} }
 function capability(sides: readonly string[] = ['left', 'right']) {
   const listener = (event: Event) => (event as CustomEvent<{ accept: (value: { sides: readonly string[] }) => void }>).detail.accept({ sides })
   window.addEventListener(TRACK_AGENT_CAPABILITIES_EVENT, listener)
   stopListeners.push(() => window.removeEventListener(TRACK_AGENT_CAPABILITIES_EVENT, listener))
 }
-function Hook({ track }: { track: TrackSummary | null }) {
-  state = useTrackAgentDrawer({page: track ? 'overview' : 'library', track, trackCount: fakeTracks.current.list.length, library: fakeTracks.current.list}, () => services)
+function Hook({ track, page }: { track: TrackSummary | null; page?: Parameters<typeof useTrackAgentDrawer>[0]['page'] }) {
+  state = useTrackAgentDrawer({page: page ?? (track ? 'overview' : 'library'), track, trackCount: fakeTracks.current.list.length, library: fakeTracks.current.list}, () => services)
   return null
 }
-async function renderHook(track: TrackSummary | null = tracks[0]) {
-  await act(async () => { root!.render(createElement(Hook, { track })) })
+async function renderHook(track: TrackSummary | null = tracks[0], page?: Parameters<typeof useTrackAgentDrawer>[0]['page']) {
+  await act(async () => { root!.render(createElement(Hook, { track, page })) })
 }
 async function startToggle() {
   let opening!: Promise<void>
@@ -65,10 +65,11 @@ beforeEach(() => {
   vi.clearAllMocks()
   stopListeners = []; events = []
   services = {
+    sessions: {},
     uiWorkspace: { openSession: vi.fn() }, layout: { selectPanel: vi.fn() }, api: vi.fn(async () => ({})),
   } as unknown as TrackAgentServices
-  ensureSession.mockImplementation(async (value) => {
-    const result = session()
+  ensureSession.mockImplementation(async (value, _signal, trackId) => {
+    const result = session(trackId)
     value.uiWorkspace.openSession(result.sessionId)
     value.layout.selectPanel('cqai-track')
     return result
@@ -89,7 +90,7 @@ afterEach(async () => {
   vi.unstubAllGlobals(); vi.useRealTimers(); localStorage.clear()
 })
 
-describe('left Agent capability and fixed library scope', () => {
+describe('left Agent capability and selected project scope', () => {
   it('requires an explicit left-side capability', async () => {
     expect(trackAgentDrawerAvailable()).toBe(false)
     capability(['right'])
@@ -115,11 +116,11 @@ describe('left Agent capability and fixed library scope', () => {
     stopListeners.push(() => window.removeEventListener(TRACK_AGENT_DRAWER_EVENT, opened))
     await renderHook()
     await act(async () => { await state.toggle() })
-    expect(ensureSession).toHaveBeenCalledWith(services, expect.any(AbortSignal))
+    expect(ensureSession).toHaveBeenCalledWith(services, expect.any(AbortSignal), tracks[0].id)
     expect(services.api).toHaveBeenCalledWith('agent-context', {page: 'overview', trackId: 'track-0'})
     expect(sequence).toEqual(['open-session', 'open-drawer'])
     expect(opens()).toEqual([expect.objectContaining({
-      open: true, panelId: 'cqai-track', entityId: 'track-library', side: 'left', mode: 'simple', title: 'Agent · 轨迹助手', requestId: expect.any(String),
+      open: true, panelId: 'cqai-track', entityId: tracks[0].id, side: 'left', mode: 'simple', title: 'Agent · 轨迹助手', requestId: expect.any(String),
     })])
     expect(state.open).toBe(true)
     expect(state.busy).toBe(false)
@@ -147,7 +148,7 @@ describe('left Agent capability and fixed library scope', () => {
 })
 
 describe('drawer lifetime and context races', () => {
-  it('keeps preparation on route changes and opens with the latest context', async () => {
+  it('cancels the previous project opener and opens only the selected route', async () => {
     capability()
     const wait = deferred<ReturnType<typeof session>>()
     ensureSession.mockReturnValueOnce(wait.promise)
@@ -155,30 +156,49 @@ describe('drawer lifetime and context races', () => {
     const {opening} = await startToggle()
     const signal = ensureSession.mock.calls[0][1]!
     await renderHook(tracks[1])
-    expect(signal.aborted).toBe(false)
-    expect(state.busy).toBe(true)
+    expect(signal.aborted).toBe(true)
+    expect(ensureSession.mock.calls.map(call => call[2])).toEqual(['track-0','track-1'])
     await act(async () => { wait.resolve(session()); await opening })
-    expect(ensureSession).toHaveBeenCalledTimes(1)
     expect(opens()).toHaveLength(1)
+    expect(opens()[0]).toMatchObject({entityId:'track-1'})
     expect(opens()[0].summary?.items).toContainEqual({label: '当前线路', value: '武功山反穿'})
     expect(opens()[0].summary?.items).toContainEqual({label: '轨迹编号', value: 'track-1'})
     expect(services.api).toHaveBeenCalledWith('agent-context', {page: 'overview', trackId: 'track-1'})
+    expect(services.api).not.toHaveBeenCalledWith('agent-context', {page: 'overview', trackId: 'track-0'})
     expect(state.open).toBe(true)
   })
-  it('updates context without closing or preparing another session', async () => {
+  it('switches native projects on A to B to A and uses the library project on return', async () => {
     capability()
     await renderHook()
     await act(async () => { await state.toggle() })
     const first = opens()[0]
     await renderHook(tracks[1])
+    const second = opens().at(-1)!
+    expect(events).toContainEqual({...first,open:false})
+    expect(second.entityId).toBe('track-1');expect(second.requestId).not.toBe(first.requestId)
+    await renderHook(tracks[0])
+    expect(opens().at(-1)?.entityId).toBe('track-0')
     await renderHook(null)
-    expect(ensureSession).toHaveBeenCalledTimes(1)
-    expect(events.every(event => event.open)).toBe(true)
-    expect(opens().every(event => event.requestId === first.requestId)).toBe(true)
+    expect(ensureSession.mock.calls.map(call=>call[2])).toEqual(['track-0','track-1','track-0',null])
+    expect(vi.mocked(services.uiWorkspace.openSession).mock.calls.map(call=>call[0])).toEqual(['track-0-session','track-1-session','track-0-session','track-library-session'])
+    expect(opens().at(-1)?.entityId).toBe('track-library')
     expect(opens().at(-1)?.summary?.items).toEqual([
       {label: '轨迹库', value: '2 条轨迹'}, {label: '当前页面', value: '轨迹列表'}, {label: '当前线路', value: '未选择线路'}, {label: '轨迹编号', value: '未选择线路'},
     ])
     expect(services.api).toHaveBeenLastCalledWith('agent-context', {page: 'library', trackId: null})
+  })
+  it('stays closed when changing routes without an active or pending drawer', async () => {
+    capability();await renderHook();await renderHook(tracks[1]);await renderHook(null)
+    expect(ensureSession).not.toHaveBeenCalled();expect(opens()).toHaveLength(0)
+  })
+  it('leaves the previous project closed when the new project fails and retries the current one', async () => {
+    capability();await renderHook();await act(async()=>{await state.toggle()})
+    ensureSession.mockRejectedValueOnce(new Error('new project unavailable'))
+    await renderHook(tracks[1])
+    expect(state.open).toBe(false);expect(state.error).toBe('new project unavailable')
+    expect(opens().at(-1)?.entityId).toBe('track-0')
+    await act(async()=>{await state.toggle()})
+    expect(state.open).toBe(true);expect(opens().at(-1)?.entityId).toBe('track-1')
   })
   it('refreshes the workspace snapshot when library metadata changes without a count change', async () => {
     capability()
@@ -191,29 +211,36 @@ describe('drawer lifetime and context races', () => {
     expect(ensureSession).toHaveBeenCalledTimes(1)
     expect(events.every(event => event.open)).toBe(true)
   })
-  it('serializes context writes so a slow previous route cannot overwrite the latest route', async () => {
-    capability()
-    await renderHook()
-    await act(async () => { await state.toggle() })
+  it('serializes context in one project while a slow A write does not block opening B', async () => {
+    capability();await renderHook();await act(async () => { await state.toggle() })
     const wait = deferred<unknown>()
     vi.mocked(services.api!).mockReturnValueOnce(wait.promise)
-    await renderHook(tracks[1])
-    await renderHook(null)
-    // Initial preparation plus the first pending update; final update is queued.
+    await renderHook(tracks[0],'route-information')
+    await renderHook(tracks[0],'edit')
+    // Both writes belong to A; its second write waits for the first.
     expect(services.api).toHaveBeenCalledTimes(2)
-    await act(async () => { wait.resolve({}); await wait.promise })
-    expect(services.api).toHaveBeenLastCalledWith('agent-context', {page: 'library', trackId: null})
-    expect(opens().at(-1)?.summary?.items).toContainEqual({label: '当前线路', value: '未选择线路'})
+    expect(ensureSession).toHaveBeenCalledTimes(1)
+    await renderHook(tracks[1])
+    expect(state.open).toBe(true);expect(opens().at(-1)?.entityId).toBe('track-1')
+    expect(services.api).toHaveBeenLastCalledWith('agent-context',{page:'overview',trackId:'track-1'})
+    expect(services.api).toHaveBeenCalledTimes(3)
+    await act(async () => {wait.resolve({});await wait.promise})
+    expect(vi.mocked(services.api!).mock.calls.map(call=>call[1])).toEqual([
+      {page:'overview',trackId:'track-0'}, {page:'route-information',trackId:'track-0'},
+      {page:'overview',trackId:'track-1'}, {page:'edit',trackId:'track-0'},
+    ])
+    expect(state.open).toBe(true);expect(opens().at(-1)?.entityId).toBe('track-1')
+    expect(opens().at(-1)?.summary?.items).toContainEqual({label:'当前线路',value:'武功山反穿'})
   })
-  it('reports context failure while preserving the active drawer and lets the next scope refresh recover', async () => {
+  it('reports same-project context failure while preserving its drawer and recovers on refresh', async () => {
     capability()
     await renderHook()
     await act(async () => { await state.toggle() })
     vi.mocked(services.api!).mockRejectedValueOnce(new Error('context unavailable'))
-    await renderHook(tracks[1])
+    await renderHook({...tracks[0],name:'峨眉山更新'})
     expect(state.open).toBe(true)
     expect(state.error).toBe('context unavailable')
-    await renderHook(null)
+    await renderHook({...tracks[0],name:'峨眉山再更新'})
     expect(state.open).toBe(true)
     expect(state.error).toBe('')
   })
@@ -259,7 +286,7 @@ describe('drawer lifetime and context races', () => {
     const current = opens()[1]
     await dispatchClose({requestId: previous.requestId})
     await dispatchClose({panelId: 'other', requestId: current.requestId})
-    await dispatchClose({entityId: 'track-0', requestId: current.requestId})
+    await dispatchClose({entityId: 'track-1', requestId: current.requestId})
     expect(state.open).toBe(true)
     await dispatchClose({entityId: current.entityId, requestId: current.requestId})
     expect(state.open).toBe(false)
@@ -331,7 +358,7 @@ describe('real TrackPanel and slot entry wiring', () => {
   it('gets DSH services through the real slot registration', async () => {
     capability()
     let entry: (() => ReactElement) | undefined
-    const sources = {sessions: {}, workspaces: {}, uiWorkspace: services.uiWorkspace, layout: services.layout}
+    const sources = {sessions: {}, workspaces: {}, uiWorkspace: services.uiWorkspace, layout: services.layout, sidebarRight: undefined}
     const ctx = {
       get: vi.fn((name: keyof typeof sources) => sources[name]),
       slots: {
@@ -343,7 +370,48 @@ describe('real TrackPanel and slot entry wiring', () => {
     expect(entry).toBeDefined()
     await act(async () => { root!.render(entry!()) })
     await click(button('Agent')!)
-    expect(ensureSession).toHaveBeenCalledWith(sources, expect.any(AbortSignal))
-    expect(opens()[0]).toMatchObject({panelId: 'cqai-track', entityId: 'track-library', side: 'left', mode: 'simple'})
+    expect(ensureSession).toHaveBeenCalledWith(sources, expect.any(AbortSignal), tracks[0].id)
+    expect(opens()[0]).toMatchObject({panelId: 'cqai-track', entityId: tracks[0].id, side: 'left', mode: 'simple'})
+  })
+})
+describe('visited project native Session ownership', () => {
+  it('holds A and B scopes across selection and drawer closes, deduplicates A and releases all on unmount', async () => {
+    capability()
+    const references = new Map<string,{sessionId:string;ready:Promise<unknown>;release:ReturnType<typeof vi.fn>}>()
+    const retain=vi.fn((id:string)=>{const reference={sessionId:id,ready:Promise.resolve(),release:vi.fn()};references.set(id,reference);return reference})
+    services.sessions.retain=retain
+    await renderHook();await act(async()=>{await state.show()})
+    await act(async()=>{await state.show()})
+    await renderHook(tracks[1]);await renderHook(tracks[0])
+    expect(retain.mock.calls).toEqual([['track-0-session',{source:'trackPanel'}],['track-1-session',{source:'trackPanel'}]])
+    for(const reference of references.values())expect(reference.release).not.toHaveBeenCalled()
+    await act(async()=>{state.close()})
+    for(const reference of references.values())expect(reference.release).not.toHaveBeenCalled()
+    await act(async()=>{root!.unmount()});root=undefined
+    for(const reference of references.values())expect(reference.release).toHaveBeenCalledTimes(1)
+  })
+  it('cancels waiting for native readiness without discarding that project or opening a stale drawer', async () => {
+    capability();const wait=deferred<unknown>(),release=vi.fn()
+    const retain=vi.fn((id:string)=>({sessionId:id,ready:wait.promise,release}))
+    services.sessions.retain=retain
+    await renderHook();const {opening}=await startToggle()
+    expect(retain).toHaveBeenCalledTimes(1);expect(services.api).not.toHaveBeenCalled()
+    await act(async()=>{state.close();await opening})
+    expect(state.busy).toBe(false);expect(opens()).toHaveLength(0);expect(release).not.toHaveBeenCalled()
+    await act(async()=>{wait.resolve({});await wait.promise;await state.show()})
+    expect(retain).toHaveBeenCalledTimes(1);expect(state.open).toBe(true)
+    await act(async()=>{root!.unmount()});root=undefined
+    expect(release).toHaveBeenCalledTimes(1)
+  })
+  it('releases a failed native open and creates a fresh holder on retry', async () => {
+    capability();const failedRelease=vi.fn(),nextRelease=vi.fn()
+    services.sessions.retain=vi.fn().mockImplementationOnce((id:string)=>({sessionId:id,ready:Promise.reject(new Error('native open failed')),release:failedRelease}))
+      .mockImplementationOnce((id:string)=>({sessionId:id,ready:Promise.resolve(),release:nextRelease}))
+    await renderHook();await act(async()=>{await state.show()})
+    expect(state.open).toBe(false);expect(state.error).toBe('native open failed');expect(failedRelease).toHaveBeenCalledTimes(1)
+    await act(async()=>{await state.show()})
+    expect(state.open).toBe(true);expect(state.error).toBe('');expect(services.sessions.retain).toHaveBeenCalledTimes(2)
+    await act(async()=>{root!.unmount()});root=undefined
+    expect(failedRelease).toHaveBeenCalledTimes(1);expect(nextRelease).toHaveBeenCalledTimes(1)
   })
 })
