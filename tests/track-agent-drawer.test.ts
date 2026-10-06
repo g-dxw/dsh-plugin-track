@@ -215,7 +215,7 @@ describe('drawer lifetime and context races', () => {
     capability();await renderHook();await act(async () => { await state.toggle() })
     const wait = deferred<unknown>()
     vi.mocked(services.api!).mockReturnValueOnce(wait.promise)
-    await renderHook(tracks[0],'route-information')
+    await renderHook(tracks[0],'animation')
     await renderHook(tracks[0],'edit')
     // Both writes belong to A; its second write waits for the first.
     expect(services.api).toHaveBeenCalledTimes(2)
@@ -226,7 +226,7 @@ describe('drawer lifetime and context races', () => {
     expect(services.api).toHaveBeenCalledTimes(3)
     await act(async () => {wait.resolve({});await wait.promise})
     expect(vi.mocked(services.api!).mock.calls.map(call=>call[1])).toEqual([
-      {page:'overview',trackId:'track-0'}, {page:'route-information',trackId:'track-0'},
+      {page:'overview',trackId:'track-0'}, {page:'animation',trackId:'track-0'},
       {page:'overview',trackId:'track-1'}, {page:'edit',trackId:'track-0'},
     ])
     expect(state.open).toBe(true);expect(opens().at(-1)?.entityId).toBe('track-1')
@@ -358,7 +358,7 @@ describe('real TrackPanel and slot entry wiring', () => {
   it('gets DSH services through the real slot registration', async () => {
     capability()
     let entry: (() => ReactElement) | undefined
-    const sources = {sessions: {}, workspaces: {}, uiWorkspace: services.uiWorkspace, layout: services.layout, sidebarRight: undefined}
+    const sources = {sessions: {}, workspaces: {}, uiWorkspace: services.uiWorkspace, layout: services.layout}
     const ctx = {
       get: vi.fn((name: keyof typeof sources) => sources[name]),
       slots: {

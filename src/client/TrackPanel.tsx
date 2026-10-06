@@ -14,7 +14,6 @@ import { TrackOverview } from './TrackOverview.tsx'
 import { TrackEditor } from './TrackEditor.tsx'
 import { AnimationStudio } from './AnimationStudio.tsx'
 import { TrackVideoScript } from './TrackVideoScript.tsx'
-import { RouteInformation } from './RouteInformation.tsx'
 import { DeleteTrackDialog } from './DeleteTrackDialog.tsx'
 import { MapSettingsProvider, useMapSettings } from './map-settings.tsx'
 import { api, download, clipboardSafeName } from './util.ts'
@@ -39,15 +38,14 @@ function TrackPanelBody({getAgentServices}: {getAgentServices?: TrackAgentServic
   const [editor, setEditor] = useState<{initial: TrackRecord | null} | null>(null)
   const [animation, setAnimation] = useState<TrackRecord | null>(null)
   const [videoScript, setVideoScript] = useState<TrackRecord | null>(null)
-  const [routeInformation, setRouteInformation] = useState<TrackRecord | null>(null)
   const picking = useRef<HTMLInputElement>(null)
   const heading = useRef<HTMLHeadingElement>(null)
   const [deleteTarget, setDeleteTarget] = useState<TrackSummary | null>(null)
   const [deleting, setDeleting] = useState(false)
   const deletingNow = useRef(false)
-  const agentTrack = editor ? editor.initial : animation || routeInformation || videoScript || tracks.open
+  const agentTrack = editor ? editor.initial : animation || videoScript || tracks.open
   const agent = useTrackAgentDrawer({
-    page: editor ? editor.initial ? 'edit' : 'new' : animation ? 'animation' : routeInformation ? 'route-information' : videoScript ? 'video-script' : tracks.open ? 'overview' : 'library',
+    page: editor ? editor.initial ? 'edit' : 'new' : animation ? 'animation' : videoScript ? 'video-script' : tracks.open ? 'overview' : 'library',
     track: agentTrack, trackCount: tracks.list.length, library: tracks.list,
   }, getAgentServices)
 
@@ -79,8 +77,8 @@ function TrackPanelBody({getAgentServices}: {getAgentServices?: TrackAgentServic
               disabled={!agent.available} aria-disabled={agent.busy || undefined} aria-busy={agent.busy || undefined}
               title={!agent.available ? '当前布局需要支持左侧 Agent 的 Desktop 扩展布局' : undefined}
               onClick={() => void agent.toggle()}>{agent.busy ? '正在打开 Agent…' : agent.open ? '收起 Agent' : 'Agent'}</button>
-            {!editor && !animation && !routeInformation && !videoScript && <button className="trk-secondary" onClick={() => setEditor({initial: null})}>新建路线</button>}
-            {tracks.open && !editor && !animation && !routeInformation && !videoScript && <button className="trk-secondary" onClick={tracks.closeTrack}>返回列表</button>}
+            {!editor && !animation && !videoScript && <button className="trk-secondary" onClick={() => setEditor({initial: null})}>新建路线</button>}
+            {tracks.open && !editor && !animation && !videoScript && <button className="trk-secondary" onClick={tracks.closeTrack}>返回列表</button>}
             <button className="trk-secondary" onClick={() => void tracks.refresh()}>刷新</button>
           </div>
         </header>
@@ -93,7 +91,6 @@ function TrackPanelBody({getAgentServices}: {getAgentServices?: TrackAgentServic
           ? <TrackEditor key={editor.initial?.id ?? 'new'} initial={editor.initial} availableTracks={tracks.list} basemap={basemap} onBasemap={setBasemap}
               loadTrack={id => api<TrackRecord>(`track?id=${encodeURIComponent(id)}`)}
               onSave={async (inputs, options) => {await tracks.saveEdited(inputs); if (!options?.keepEditing) setEditor(null)}} onCancel={() => setEditor(null)} />
-          : routeInformation ? <RouteInformation key={routeInformation.id} track={routeInformation} getAgentServices={getAgentServices} onPrepare={agent.close} onBack={()=>setRouteInformation(null)} />
           : videoScript ? <TrackVideoScript key={videoScript.id} track={videoScript} basemap={basemap} onBasemap={setBasemap} onCancel={()=>setVideoScript(null)} />
           : animation ? <AnimationStudio key={animation.id} track={animation} basemap={basemap} onBasemap={setBasemap} onCancel={()=>setAnimation(null)} />
           : tracks.open ? null
@@ -129,7 +126,7 @@ function TrackPanelBody({getAgentServices}: {getAgentServices?: TrackAgentServic
               </div>
               : <div className="trk-empty">还没有轨迹。导入一条 GPX，看它在地图上的样子。</div>}
           </>}
-        {tracks.open && <div hidden={Boolean(editor || routeInformation || videoScript || animation)}><TrackDetail track={tracks.open} basemap={basemap} onBasemap={setBasemap} onRemove={() => requestDelete(tracks.open!)} onEdit={() => setEditor({initial: tracks.open})} onAnimation={()=>setAnimation(tracks.open)} onRouteInformation={()=>setRouteInformation(tracks.open)} onVideoScript={()=>setVideoScript(tracks.open)} /></div>}
+        {tracks.open && <div hidden={Boolean(editor || videoScript || animation)}><TrackDetail track={tracks.open} basemap={basemap} onBasemap={setBasemap} onRemove={() => requestDelete(tracks.open!)} onEdit={() => setEditor({initial: tracks.open})} onAnimation={()=>setAnimation(tracks.open)} onVideoScript={()=>setVideoScript(tracks.open)} /></div>}
       </div>
       {deleteTarget && <DeleteTrackDialog track={deleteTarget} busy={deleting} error={tracks.error} fallbackFocus={heading.current}
         onCancel={() => {if (!deletingNow.current) {setDeleteTarget(null); tracks.clearError()}}} onConfirm={() => void confirmDelete()} />}
@@ -157,14 +154,13 @@ function TrackRow({track, onOpen, onRemove}: {track: TrackSummary; onOpen: () =>
   )
 }
 
-function TrackDetail({track, basemap, onBasemap, onRemove, onEdit, onAnimation, onRouteInformation, onVideoScript}: {
+function TrackDetail({track, basemap, onBasemap, onRemove, onEdit, onAnimation, onVideoScript}: {
   track: TrackRecord
   basemap: BasemapId
   onBasemap: (next: BasemapId) => void
   onRemove: () => void
   onEdit: () => void
   onAnimation: () => void
-  onRouteInformation: () => void
   onVideoScript: () => void
 }) {
   return (
@@ -176,7 +172,6 @@ function TrackDetail({track, basemap, onBasemap, onRemove, onEdit, onAnimation, 
         </div>
         <div className="trk-detail-actions">
           <button className="trk-secondary" onClick={onEdit}>编辑当前轨迹</button>
-          <button className="trk-secondary" onClick={onRouteInformation}>路线信息整理</button>
           <button className="trk-secondary" onClick={onVideoScript}>轨迹视频制作</button>
           <button className="trk-secondary" onClick={onAnimation}>轨迹动画录制</button>
           <a className="trk-secondary" href={`${API}/source?id=${encodeURIComponent(track.id)}`} download={track.filename}>导出原文件</a>

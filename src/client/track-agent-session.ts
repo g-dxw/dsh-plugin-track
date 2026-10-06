@@ -46,11 +46,6 @@ export interface TrackAgentServices {
     /** Available on the official layout service; also cancels manual navigation. */
     beginNavigation?(): AbortSignal
   }
-  /** Native files and previews stay bound to their official Session seat. */
-  readonly sidebarRight?: {
-    readonly mounted: SnapshotSource<string | undefined>
-    openTab(kind: 'files'): void
-  }
   readonly api?: <T>(action: string, data: unknown) => Promise<T>
 }
 
@@ -186,7 +181,6 @@ export async function ensureTrackAgentSession(
   services: TrackAgentServices,
   signal?: AbortSignal,
   trackId: string | null = null,
-  options: {presentation?: 'track' | 'conversation'; onActivate?: () => void} = {},
 ): Promise<TrackAgentSession> {
   throwIfAborted(signal)
   const navigation = services.layout.beginNavigation?.()
@@ -215,9 +209,8 @@ export async function ensureTrackAgentSession(
   throwIfAborted(navigation)
   if (generation !== runtime.generation) throw aborted()
   if (!reusable(services, result.sessionId, result.workspaceId)) throw new Error('Agent 对话已失效，请重新打开')
-  // Native files and document previews belong to the official Conversation surface.
-  options.onActivate?.()
+  // openSession selects Conversation; restore the track panel synchronously.
   services.uiWorkspace.openSession(result.sessionId)
-  if (options.presentation !== 'conversation') services.layout.selectPanel('cqai-track')
+  services.layout.selectPanel('cqai-track')
   return result
 }

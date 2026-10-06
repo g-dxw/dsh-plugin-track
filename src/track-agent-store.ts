@@ -2,8 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { resolveDshHome } from '@deepseek-ai/dsh-home-paths'
-import { listTracks, readTrack, trackDir } from './artifacts.ts'
-import { TRACK_EXTENSIONS } from './protocol.ts'
+import { listTracks, readTrack } from './artifacts.ts'
 import { TRACK_AGENT_PAGES, type TrackAgentContext } from './track-agent-context.ts'
 
 /** The library has a shared workspace; each saved route has its own project and session. */
@@ -54,20 +53,10 @@ function writeJson(file: string, value: unknown): void {
 function snapshot(context: TrackAgentContext, env: NodeJS.ProcessEnv) {
   const tracks = listTracks(env)
   const currentTrack = context.page === 'library' || context.page === 'new' ? null : tracks.find(track => track.id === context.trackId) ?? null
-  const sourceTrack = context.page === 'route-information' && currentTrack ? readTrack(currentTrack.id, env) : null
-  const format = sourceTrack && TRACK_EXTENSIONS.find(extension => extension === sourceTrack.format)
-  const sources = sourceTrack ? {
-    trackJson: join(trackDir(sourceTrack.id, env), 'track.json'),
-    sourceFile: format ? join(trackDir(sourceTrack.id, env), 'source.' + format) : null,
-    placemarkState: join(trackDir(sourceTrack.id, env), 'placemark-state.json'),
-  } : undefined
   return {
     version: 2, updatedAt: new Date().toISOString(),
     library: {trackCount: tracks.length, tracks},
-    current: {page: context.page, pageTitle: TRACK_AGENT_PAGES[context.page], trackId: currentTrack?.id ?? null, track: currentTrack,
-      ...(currentTrack ? {workspacePath: join(directory(env), 'tracks', currentTrack.id)} : {}),
-      ...(sources ? {sources, sourcesNote: '这些路径仅作只读来源。placemark-state.json 可能尚未生成；不存在时使用 track.json 中的原始点位。sourceFile 为 null 时没有已确认格式的原始文件路径。'} : {}),
-    },
+    current: {page: context.page, pageTitle: TRACK_AGENT_PAGES[context.page], trackId: currentTrack?.id ?? null, track: currentTrack},
   }
 }
 
@@ -86,9 +75,6 @@ export function ensureTrackAgentWorkspace(env: NodeJS.ProcessEnv = process.env, 
     selected ? '目录以轨迹编号固定，线路改名不会改变目录。切换到其他线路时，应用会打开另一条线路的独立目录和会话。' : '选择已保存线路后，应用会打开该线路的独立项目目录和会话。',
     'current.track 为 null 时，当前没有选定已保存线路；不要从旧对话推断当前线路。新建路线的未保存内容尚未同步。',
     '本工作区用于轨迹讨论和方案草稿。修改这里的文件不会修改应用中的轨迹。',
-    '路线资料 Markdown 保存在当前线路的 Agent 工作区（current.workspacePath），通过应用的文件列表预览；已有用户资料只在明确要求时修改，不要另建第二份资料索引。',
-    '当前页面为 route-information 时，先读取 current.sources 列出的只读来源。保留来源中的路线名称、标注点与分组信息和真实坐标；不要修改 track.json、原始 source 文件或 placemark-state.json。',
-    '整理环境、交通、补给和住宿资料时区分轨迹实测信息、用户经历与外部来源；没有依据或可能过时的内容标为待核实，不要把轨迹记录时长当作行程安排。',
     '轨迹、标注点和分组的编辑工具尚未接入；没有工具成功结果时，不要声称已修改应用数据。', '',
   ].join('\n'), {encoding: 'utf8', flag: 'wx'})
   return {path, sessionId: savedSession(selected ? path : root)}

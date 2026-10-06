@@ -86,29 +86,6 @@ describe('track native Agent Session', () => {
     expect(f.catalog.subscriberCount + f.workspaces.subscriberCount).toBe(0)
   })
 
-  it('opens route information as a full native conversation without returning to Track or altering the composer', async () => {
-    const f = fixture()
-    const composer = {input: {for: vi.fn(() => ({addAttachments: vi.fn(() => true)}))}, createDrafts: vi.fn(() => []), releaseDraftAttachments: vi.fn(), send: vi.fn()}
-    const services: TrackAgentServices & {conversation: typeof composer} = {...f.services, conversation: composer}
-    const opened = await ensureTrackAgentSession(services, undefined, 'track-A', {presentation: 'conversation'})
-    expect(opened).toEqual({sessionId: 'session-workspace-track-A', workspaceId: 'workspace-track-A'})
-    expect(f.order).toEqual(['save:session-workspace-track-A', 'open:session-workspace-track-A'])
-    expect(f.selectPanel).not.toHaveBeenCalled()
-    expect(f.api.mock.calls).toEqual([['agent-workspace', {trackId: 'track-A'}], ['agent-session', {sessionId: opened.sessionId, trackId: 'track-A'}]])
-    expect(composer.input.for).not.toHaveBeenCalled(); expect(composer.createDrafts).not.toHaveBeenCalled(); expect(composer.send).not.toHaveBeenCalled()
-    expect(f.catalog.subscriberCount + f.workspaces.subscriberCount).toBe(0)
-  })
-
-  it('reuses the route conversation across drawer and full conversation presentation', async () => {
-    const f = fixture()
-    const drawer = await ensureTrackAgentSession(f.services, undefined, 'track-A')
-    f.selectPanel.mockClear()
-    expect(await ensureTrackAgentSession(f.services, undefined, 'track-A', {presentation: 'conversation'})).toEqual(drawer)
-    expect(f.createSession).toHaveBeenCalledOnce()
-    expect(f.openSession.mock.calls).toEqual([[drawer.sessionId], [drawer.sessionId]])
-    expect(f.selectPanel).not.toHaveBeenCalled()
-    expect(f.trackBindings.get('track-A')).toBe(drawer.sessionId)
-  })
   it('reuses the fixed native conversation on reopen', async () => {
     const f = fixture()
     await ensureTrackAgentSession(f.services)

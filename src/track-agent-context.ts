@@ -2,7 +2,7 @@ import type { TrackSummary } from './protocol.ts'
 import { clipTitle } from './track/title.ts'
 
 export const TRACK_AGENT_PAGES = {
-  library: '轨迹列表', overview: '线路详情', 'route-information': '路线信息整理', edit: '编辑线路',
+  library: '轨迹列表', overview: '线路详情', edit: '编辑线路',
   new: '新建路线', art: '轨迹海报', animation: '轨迹动画', 'video-script': '镜头案例与脚本',
 } as const
 export type TrackAgentPage = keyof typeof TRACK_AGENT_PAGES

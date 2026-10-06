@@ -40,7 +40,7 @@ describe('native track Agent project workspaces', () => {
     const project = ensureTrackAgentWorkspace(env, id)
     for (const code of ['EPERM', 'EBUSY']) {
       faults.renameCode = code; faults.remaining = 2; faults.attempts = 0
-      const context = writeTrackAgentContext({page: 'route-information', trackId: id}, env)
+      const context = writeTrackAgentContext({page: 'edit', trackId: id}, env)
       expect(faults.attempts).toBe(3)
       expect(snapshot(id).current).toEqual(context.current)
       expect(readdirSync(project.path).filter(name => name.endsWith('.tmp'))).toEqual([])
@@ -52,7 +52,7 @@ describe('native track Agent project workspaces', () => {
     const waits: number[] = []
     vi.spyOn(Atomics, 'wait').mockImplementation((_array, _index, _value, timeout) => {waits.push(timeout ?? 0); return 'timed-out'})
     faults.renameCode = 'EPERM'; faults.remaining = 100
-    expect(() => writeTrackAgentContext({page: 'route-information', trackId: id}, env)).toThrow('replacement failure')
+    expect(() => writeTrackAgentContext({page: 'edit', trackId: id}, env)).toThrow('replacement failure')
     expect(waits.length).toBeGreaterThan(0); expect(waits.reduce((sum, value) => sum + value, 0)).toBeLessThan(1000)
     expect(faults.attempts).toBe(waits.length + 1)
     expect(readFileSync(target)).toEqual(original)
@@ -64,63 +64,18 @@ describe('native track Agent project workspaces', () => {
     const wait = vi.spyOn(Atomics, 'wait').mockImplementation(() => 'timed-out')
     for (const code of ['EACCES', 'EXDEV']) {
       faults.renameCode = code; faults.remaining = 100; faults.attempts = 0
-      expect(() => writeTrackAgentContext({page: 'route-information', trackId: id}, env)).toThrow('replacement failure')
+      expect(() => writeTrackAgentContext({page: 'edit', trackId: id}, env)).toThrow('replacement failure')
       expect(faults.attempts).toBe(1); expect(wait).not.toHaveBeenCalled()
       expect(readFileSync(target)).toEqual(original)
       expect(readdirSync(project.path).filter(name => name.endsWith('.tmp'))).toEqual([])
     }
     faults.renameCode = ''; faults.collision = true
-    expect(() => writeTrackAgentContext({page: 'route-information', trackId: id}, env)).toThrow()
+    expect(() => writeTrackAgentContext({page: 'edit', trackId: id}, env)).toThrow()
     faults.collision = false
     expect(readFileSync(target)).toEqual(original)
     const collision = readdirSync(project.path).filter(name => name.endsWith('.tmp'))
     expect(collision).toHaveLength(1)
     expect(readFileSync(join(project.path, collision[0]), 'utf8')).toBe('unowned colliding snapshot')
-  })
-  it('gives each route information Agent its own workspace and read-only real source paths', () => {
-    const secondId = writeTrack({...input, name: '第二条路线', filename: 'second.kml', source: '<kml>second</kml>'}, env).id
-    const placemarkState = join(trackDir(id, env), 'placemark-state.json')
-    writeFileSync(placemarkState, '{"version":1,"revision":3,"edits":[]}')
-    const originals = [join(trackDir(id, env), 'track.json'), join(trackDir(id, env), 'source.gpx'), placemarkState, join(trackDir(secondId, env), 'track.json'), join(trackDir(secondId, env), 'source.kml')]
-      .map(path => ({path, bytes: readFileSync(path)}))
-    for (const [trackId, format] of [[id, 'gpx'], [secondId, 'kml']]) {
-      const project = ensureTrackAgentWorkspace(env, trackId)
-      writeFileSync(join(project.path, 'AGENTS.md'), '已有用户说明')
-      writeFileSync(join(project.path, '路线资料.md'), '已有真实路线资料')
-      // Caller-provided paths never enter the snapshot.
-      const context = writeTrackAgentContext({page: 'route-information', trackId, sources: {trackJson: 'C:/outside'}, workspacePath: 'C:/outside'}, env)
-      expect(context.current).toMatchObject({page: 'route-information', trackId, workspacePath: project.path, sources: {
-        trackJson: join(trackDir(trackId, env), 'track.json'), sourceFile: join(trackDir(trackId, env), `source.${format}`),
-        placemarkState: join(trackDir(trackId, env), 'placemark-state.json'),
-      }})
-      expect(context.current.sourcesNote).toContain('只读')
-      expect(snapshot(trackId).current).toEqual(context.current)
-      expect(readFileSync(join(project.path, 'AGENTS.md'), 'utf8')).toBe('已有用户说明')
-      expect(readFileSync(join(project.path, '路线资料.md'), 'utf8')).toBe('已有真实路线资料')
-    }
-    expect(existsSync(join(trackDir(secondId, env), 'placemark-state.json'))).toBe(false)
-    for (const original of originals) expect(readFileSync(original.path)).toEqual(original.bytes)
-    writeTrackAgentContext({page: 'overview', trackId: id}, env)
-    expect(snapshot(id).current.sources).toBeUndefined()
-    for (const page of ['library', 'new']) {
-      const context = writeTrackAgentContext({page, trackId: id}, env)
-      expect(context.current.sources).toBeUndefined(); expect(context.current.workspacePath).toBeUndefined()
-    }
-  })
-  it('adds route-file guidance only when creating instructions and refuses unsafe source-format paths', () => {
-    const project = ensureTrackAgentWorkspace(env, id)
-    const instructions = readFileSync(join(project.path, 'AGENTS.md'), 'utf8')
-    expect(instructions).toContain('Markdown 保存在当前线路的 Agent 工作区')
-    expect(instructions).toContain('current.sources')
-    expect(instructions).toContain('待核实')
-    const path = join(trackDir(id, env), 'track.json'), original = JSON.parse(readFileSync(path, 'utf8'))
-    writeFileSync(path, JSON.stringify({...original, format: '../../outside'}))
-    const context = writeTrackAgentContext({page: 'route-information', trackId: id}, env)
-    expect(context.current.sources).toMatchObject({trackJson: path, sourceFile: null})
-    expect(context.current.sourcesNote).toContain('没有已确认格式')
-    for (const trackId of ['../escape', 'route/child', 'C:\\outside']) expect(() => writeTrackAgentContext({page: 'route-information', trackId}, env)).toThrow('轨迹编号无效')
-    expect(() => writeTrackAgentContext({page: 'route-information', trackId: 'missing'}, env)).toThrow('不存在')
-    expect(readFileSync(join(project.path, 'AGENTS.md'), 'utf8')).toBe(instructions)
   })
   it('opens an empty library with no route dependency', () => {
     rmSync(trackDir(id, env), {recursive: true})
@@ -154,7 +109,7 @@ describe('native track Agent project workspaces', () => {
     const library = ensureTrackAgentWorkspace(env)
     const libraryContext = readFileSync(join(library.path, 'track-context.json'), 'utf8')
     const first = ensureTrackAgentWorkspace(env, id)
-    for (const page of ['overview', 'edit', 'route-information', 'animation', 'video-script']) {
+    for (const page of ['overview', 'edit', 'edit', 'animation', 'video-script']) {
       writeTrackAgentContext({page, trackId: id}, env)
       expect(snapshot(id)).toMatchObject({current: {page, trackId: id, track: {name: '武功山反穿', points: 2}}})
     }
@@ -215,7 +170,7 @@ describe('native track Agent project workspaces', () => {
     const first = ensureTrackAgentWorkspace(env, id)
     writeFileSync(join(first.path, 'AGENTS.md'), 'user instructions')
     writeFileSync(join(first.path, 'draft.md'), 'user draft')
-    writeTrackAgentContext({page: 'route-information', trackId: id}, env)
+    writeTrackAgentContext({page: 'edit', trackId: id}, env)
     ensureTrackAgentWorkspace(env, id)
     expect(readFileSync(join(first.path, 'AGENTS.md'), 'utf8')).toBe('user instructions')
     expect(readFileSync(join(first.path, 'draft.md'), 'utf8')).toBe('user draft')
@@ -253,7 +208,7 @@ describe('native track Agent project workspaces', () => {
     }
     expect(() => ensureTrackAgentWorkspace(env, 'missing')).toThrow('Agent 轨迹不存在或已删除')
     expect(() => saveTrackAgentSession('valid-session', env, 'missing')).toThrow('Agent 轨迹不存在或已删除')
-    expect(() => writeTrackAgentContext({page: 'route-information', trackId: 'missing'}, env)).toThrow('Agent 轨迹不存在或已删除')
+    expect(() => writeTrackAgentContext({page: 'edit', trackId: 'missing'}, env)).toThrow('Agent 轨迹不存在或已删除')
     expect(existsSync(join(env.DSH_HOME!, 'track-agent'))).toBe(false)
   })
 })
