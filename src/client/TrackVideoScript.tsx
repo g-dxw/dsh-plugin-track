@@ -10,6 +10,9 @@ import { useTextModels } from './useTextModels.ts'
 import { MapView } from './MapView.tsx'
 import { ShotCaseLab } from './ShotCaseLab.tsx'
 import { ShotEditor } from './ShotEditor.tsx'
+import { GeoMotionEditor } from './GeoMotionEditor.tsx'
+import { VideoMaterialPrep } from './VideoMaterialPrep.tsx'
+import type { VideoMaterialsDocument } from '../track/video-materials.ts'
 import { api, clipboardSafeName, download } from './util.ts'
 
 type Props = {track:TrackRecord; basemap:BasemapId; onBasemap:(id:BasemapId)=>void; onCancel:()=>void}
@@ -19,10 +22,13 @@ type Suggestion = {value:VideoScriptSuggestion; revision:number; fingerprint:str
 /** This workspace plans editable scenes; it never starts the recorder or an AI request on entry. */
 export function TrackVideoScript(props:Props) {return <TrackVideoWorkspace key={props.track.id} {...props} />}
 function TrackVideoWorkspace(props:Props) {
-  const [mode,setMode] = useState<'cases'|'planning'|'editing'>('cases')
+  const [mode,setMode] = useState<'cases'|'planning'|'editing'|'geomotion'|'materials'>('cases')
+  const [preparedMaterials,setPreparedMaterials] = useState<VideoMaterialsDocument|null>(null)
+  if(mode==='materials')return <VideoMaterialPrep track={props.track} onBack={()=>setMode('cases')} onCompose={document=>{setPreparedMaterials(document);setMode('geomotion')}} />
   if(mode==='editing')return <ShotEditor {...props} onCases={()=>setMode('cases')} />
+  if(mode==='geomotion')return <GeoMotionEditor {...props} preparedMaterials={preparedMaterials??undefined} onMaterials={()=>setMode('materials')} onCases={()=>setMode('cases')} />
   return mode==='cases'
-    ? <ShotCaseLab {...props} onPlanning={()=>setMode('planning')} onEditing={()=>setMode('editing')} />
+    ? <ShotCaseLab {...props} onPlanning={()=>setMode('planning')} onEditing={()=>setMode('editing')} onMaterials={()=>setMode('materials')} onGeoMotion={()=>{setPreparedMaterials(null);setMode('geomotion')}} />
     : <TrackVideoScriptPlanning {...props} onCases={()=>setMode('cases')} />
 }
 export function TrackVideoScriptPlanning(props:Props & {onCases?:()=>void}) {return <VideoScriptWorkspace key={props.track.id} {...props} />}

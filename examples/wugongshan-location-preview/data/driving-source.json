@@ -1,0 +1,212 @@
+{
+  "schema": "track-video-road-source/v1",
+  "queriedAt": "2026-10-07T03:40:34.600Z",
+  "responseDateHeader": "Wed, 07 Oct 2026 03:40:35 GMT",
+  "httpStatus": 200,
+  "responseCode": "Ok",
+  "provider": "FOSSGIS public OSRM car routing using OpenStreetMap",
+  "requestUrl": "https://routing.openstreetmap.de/routed-car/route/v1/driving/113.8359582,27.6503105;114.1717207,27.5379487?overview=full&geometries=geojson&steps=true&annotations=true",
+  "coordinateSystem": "WGS84 longitude,latitude",
+  "origin": {
+    "name": "萍乡站（普通火车站，非萍乡北站）",
+    "requestedCoordinates": [
+      113.8359582,
+      27.6503105
+    ],
+    "primarySource": {
+      "url": "https://www.openstreetmap.org/node/1579354019",
+      "type": "OSM railway=station",
+      "osmNodeId": 1579354019,
+      "name": "萍乡",
+      "englishName": "Pingxiang",
+      "wikidata": "Q15926326",
+      "coordinates": [
+        113.8359582,
+        27.6503105
+      ],
+      "queryUrl": "https://overpass-api.de/api/interpreter?data=%5Bout%3Ajson%5D%5Btimeout%3A20%5D%3Bnwr(around%3A500%2C27.6502569%2C113.8359869)%5B%22railway%22%3D%22station%22%5D%3Bout%20center%20tags%3B",
+      "queryResultHttpStatus": 200
+    },
+    "crossChecks": [
+      {
+        "url": "https://www.openstreetmap.org/way/243269156",
+        "queryUrl": "https://nominatim.openstreetmap.org/search?q=%E8%90%8D%E4%B9%A1%E7%AB%99&format=json",
+        "name": "萍乡站",
+        "type": "building=hall",
+        "address": "站前路, 后埠街道, 安源区, 萍乡市, 江西省",
+        "coordinates": [
+          113.8359578,
+          27.6502901
+        ],
+        "queryResultHttpStatus": 200
+      },
+      {
+        "url": "https://www.wikidata.org/wiki/Q15926326",
+        "queryUrl": "https://www.wikidata.org/wiki/Special:EntityData/Q15926326.json",
+        "coordinates": [
+          113.835987,
+          27.650257
+        ],
+        "queryResultHttpStatus": 200
+      },
+      {
+        "url": "https://ditu.amap.com/place/B031F0039Z",
+        "name": "萍乡站",
+        "address": "萍乡市安源区站前路",
+        "coordinates": [
+          113.841304,
+          27.647062
+        ],
+        "coordinateSystem": "GCJ-02, not used in WGS84 route geometry"
+      }
+    ],
+    "snappedWaypoint": {
+      "hint": "0qTckdSk3JEGAAAAWAAAAM4AAAB0AAAAurQ3QBDnEELSH6xCVd1BQgYAAABYAAAAzgAAAHQAAAAvKAEAcQDJBpXmpQG2_8gGB-mlAQQA_w8AAAAA",
+      "location": [
+        113.836145,
+        27.649685
+      ],
+      "name": "",
+      "distance": 71.78263036
+    }
+  },
+  "destination": {
+    "name": "本次轨迹 N01 起点（龙山村反穿登山入口）",
+    "source": "docs/track-information-wugongshan-example.md N01, track placemark kml-3",
+    "requestedCoordinates": [
+      114.1717207,
+      27.5379487
+    ],
+    "snappedWaypoint": {
+      "hint": "GrDsikNMipQGAAAAAAAAAFMCAAAyDgAACZ2MQAAAAAAUkM5DM8wdRQYAAAAAAAAAUwIAADIOAAAvKAEAsx7OBiQypAFJH84GHTKkATQAXwEAAAAA",
+      "location": [
+        114.171571,
+        27.537956
+      ],
+      "name": "",
+      "distance": 14.83875831
+    }
+  },
+  "result": {
+    "distanceMeters": 51327.1,
+    "distanceKm": 51.3271,
+    "durationSeconds": 3124.3,
+    "durationMinutes": 52.07166666666667,
+    "coordinateCount": 875,
+    "firstCoordinate": [
+      113.836145,
+      27.649685
+    ],
+    "lastCoordinate": [
+      114.171571,
+      27.537956
+    ],
+    "roads": [
+      {
+        "name": "",
+        "distanceMeters": 98.9,
+        "durationSeconds": 28.4,
+        "mode": "driving"
+      },
+      {
+        "name": "跃进北路",
+        "distanceMeters": 275.6,
+        "durationSeconds": 18,
+        "mode": "driving"
+      },
+      {
+        "name": "建设东路",
+        "distanceMeters": 2730.7,
+        "durationSeconds": 155.3,
+        "mode": "driving"
+      },
+      {
+        "name": "公园中路",
+        "distanceMeters": 379.7,
+        "durationSeconds": 27,
+        "mode": "driving"
+      },
+      {
+        "name": "公园北路",
+        "distanceMeters": 528.3,
+        "durationSeconds": 34.5,
+        "mode": "driving"
+      },
+      {
+        "name": "武功山大道",
+        "distanceMeters": 15534.9,
+        "durationSeconds": 659.7,
+        "mode": "driving"
+      },
+      {
+        "name": "",
+        "distanceMeters": 6231.5,
+        "durationSeconds": 266.3,
+        "mode": "driving"
+      },
+      {
+        "name": "",
+        "distanceMeters": 13252.1,
+        "durationSeconds": 733.3,
+        "mode": "driving"
+      },
+      {
+        "name": "建山-排上",
+        "distanceMeters": 6529,
+        "durationSeconds": 366.9,
+        "mode": "driving"
+      },
+      {
+        "name": "",
+        "distanceMeters": 853.3,
+        "durationSeconds": 126.8,
+        "mode": "driving"
+      },
+      {
+        "name": "",
+        "distanceMeters": 4913.3,
+        "durationSeconds": 708.1,
+        "mode": "driving"
+      },
+      {
+        "name": "",
+        "distanceMeters": 0,
+        "durationSeconds": 0,
+        "mode": "driving"
+      }
+    ],
+    "dataVersion": null
+  },
+  "interpretation": {
+    "distanceLabel": "驾车路线约 51.3 公里",
+    "durationLabel": "OSRM 估算约 52 分钟（无实时路况）",
+    "timingMeaning": "Routing model estimated driving duration; not real-time traffic navigation, actual taxi trip duration, or user track timestamp.",
+    "geometryMeaning": "A driving route computed on the OSM road network, not a straight-line connection and not the 23.1 km hiking track.",
+    "snappingMeaning": "Road endpoints are snapped to routable roads. Display true station and N01 marker separately; do not fabricate road segments between requested coordinates and snapped coordinates.",
+    "fareMeaning": "拼车 40 元/人仅为用户历史经历参考，非本次导航查询报价。"
+  },
+  "sources": [
+    {
+      "title": "OSRM API documentation",
+      "url": "https://project-osrm.org/docs/v5.24.0/api/"
+    },
+    {
+      "title": "FOSSGIS routing service information",
+      "url": "https://routing.openstreetmap.de/about.html"
+    },
+    {
+      "title": "OpenStreetMap copyright / ODbL attribution",
+      "url": "https://www.openstreetmap.org/copyright"
+    }
+  ],
+  "files": {
+    "rawOsrmResponse": {
+      "path": "pingxiang-station-to-longshan.osrm-response.json",
+      "sha256": "1d30d0165490534ed18c040aec11a8cbc7fbc5b8be311d2cd5f4c62191bf9713"
+    },
+    "roadGeojson": {
+      "path": "pingxiang-station-to-longshan.road.geojson",
+      "sha256": "549beb89fbeddd18ed32db7a87aab1a2c5fcff48da988fd4c5c7699485224131"
+    }
+  }
+}

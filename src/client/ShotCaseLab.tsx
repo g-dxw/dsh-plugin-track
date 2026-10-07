@@ -6,14 +6,14 @@ import { useTrackPlacemarks } from './useTrackPlacemarks.ts'
 import { ShotCaseMap } from './ShotCaseMap.tsx'
 import { clipboardSafeName, download } from './util.ts'
 
-type Props = {track:TrackRecord;basemap:BasemapId;onBasemap:(id:BasemapId)=>void;onCancel:()=>void;onPlanning:()=>void;onEditing?:()=>void}
+type Props = {track:TrackRecord;basemap:BasemapId;onBasemap:(id:BasemapId)=>void;onCancel:()=>void;onPlanning:()=>void;onEditing?:()=>void;onGeoMotion?:()=>void;onMaterials?:()=>void}
 type RecordedCase = {caseId:ShotCaseId;parameters:ShotCaseParameters;summary:string[];targetDescription:string}
 type Video = RecordedCase & {url:string;filename:string;caseTitle:string}
 type Capture = RecordedCase & {recorder:MediaRecorder;stream:MediaStream;requestFrame:(()=>void)|null;chunks:Blob[];mime:string;filename:string;title:string;started:boolean;awaitingFinal:boolean;stopping:boolean;discard:boolean;released:boolean;timer:ReturnType<typeof setTimeout>|null;flushTimer:ReturnType<typeof setTimeout>|null;finalFlushing:boolean;awaitingExtraPaint:boolean;finalPaints:number}
 
 /** A viewable camera vocabulary. Choosing, playing or recording a case never adopts a film script. */
 export function ShotCaseLab(props:Props) {return <CaseWorkspace key={props.track.id} {...props}/>}
-function CaseWorkspace({track,basemap,onBasemap,onCancel,onPlanning,onEditing}:Props) {
+function CaseWorkspace({track,basemap,onBasemap,onCancel,onPlanning,onEditing,onGeoMotion,onMaterials}:Props) {
   const points = useTrackPlacemarks(track)
   const [caseId,setCaseId] = useState<ShotCaseId>('route-intro')
   const [parameters,setParameters] = useState<ShotCaseParameters>({duration:12,detailZoom:3,pitch:0,bearing:0,pointIndex:Math.floor(Math.max(0,track.coordinates.length-1)/2),startIndex:0,endIndex:Math.max(0,track.coordinates.length-1),caption:''})
@@ -155,7 +155,7 @@ function CaseWorkspace({track,basemap,onBasemap,onCancel,onPlanning,onEditing}:P
   const numeric=(value:string)=>value===''?NaN:Number(value)
 
   return <section className="trk-shot-lab" aria-label="镜头案例测试台"><style>{CASE_LAB_CSS}</style>
-    <header className="trk-sc-header"><div><h2>镜头案例测试台</h2><p className="trk-muted">先观看怎么讲、怎么拍，再调整构图和节奏。选择或录制案例不代表采用到成片。</p></div><div className="trk-sc-actions">{onEditing&&<button className="trk-primary" disabled={recording} onClick={()=>leave(onEditing)}>三维镜头编辑</button>}<button className="trk-secondary" onClick={()=>leave(onCancel)}>返回轨迹</button></div></header>
+    <header className="trk-sc-header"><div><h2>镜头案例测试台</h2><p className="trk-muted">先观看怎么讲、怎么拍，再调整构图和节奏。选择或录制案例不代表采用到成片。</p></div><div className="trk-sc-actions">{onMaterials&&<button type="button" className="trk-primary" disabled={recording} onClick={()=>leave(onMaterials)}>二维素材准备</button>}{onGeoMotion&&<button type="button" className="trk-primary" disabled={recording} onClick={onGeoMotion}>地图镜头编辑</button>} {onEditing&&<button className="trk-primary" disabled={recording} onClick={()=>leave(onEditing)}>三维镜头编辑</button>}<button className="trk-secondary" onClick={()=>leave(onCancel)}>返回轨迹</button></div></header>
     <div className="trk-sc-catalog"><section aria-label="叙事组合案例"><h3>叙事组合案例 · 怎么讲</h3><div className="trk-sc-case-grid">{SHOT_CASES.filter(item=>item.category==='narrative').map(item=><button className={`trk-sc-case ${caseId===item.id?'selected':''}`} aria-pressed={caseId===item.id} key={item.id} data-case-id={item.id} disabled={recording} onClick={()=>changeCase(item.id)}><strong>{item.label}</strong><span>{item.description}</span><small>{item.sequence.join(' → ')}</small></button>)}</div></section>
       <section aria-label="基础地图镜头"><h3>基础地图镜头 · 怎么拍</h3><div className="trk-sc-case-grid">{SHOT_CASES.filter(item=>item.category==='shot').map(item=><button className={`trk-sc-case ${caseId===item.id?'selected':''}`} aria-pressed={caseId===item.id} key={item.id} data-case-id={item.id} disabled={recording} onClick={()=>changeCase(item.id)}><strong>{item.label}</strong><span>{item.description}</span></button>)}</div></section></div>
     {!ready&&<p role="status" className="trk-sc-notice">正在读取已保存的轨迹点位…</p>}

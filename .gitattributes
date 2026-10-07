@@ -1,1 +1,4 @@
 * text=auto eol=lf
+
+# Keep vendored-source provenance hashes stable across platforms.
+src/track/vendor/geomotion/** text eol=lf

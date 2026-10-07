@@ -44,6 +44,8 @@ const CLIENT_EXTERNALS: readonly string[] = [
 /** Third-party libraries and subpaths the client bundle carries itself. */
 const CLIENT_INLINED: readonly (string | RegExp)[] = [
   '@panzoom/panzoom',
+  'immer',
+  'mediabunny',
   'three',
   /^three\//,
   'maplibre-gl',

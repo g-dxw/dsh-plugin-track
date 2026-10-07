@@ -51,7 +51,9 @@
     "chart.js": "^4.5.1",
     "chartjs-plugin-crosshair": "^2.0.0",
     "chartjs-plugin-zoom": "^2.2.0",
+    "immer": "10.1.1",
     "maplibre-gl": "^5.24.0",
+    "mediabunny": "1.24.2",
     "sharp": "0.35.5",
     "three": "^0.185.0"
   },
@@ -83,6 +85,7 @@
     "react-dom": "18.3.1",
     "tsdown": "0.22.2",
     "typescript": "~5.7.2",
+    "vite": "8.2.1",
     "vitest": "4.1.8"
   }
 }

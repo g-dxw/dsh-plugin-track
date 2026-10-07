@@ -67,7 +67,8 @@ async function recoverRouteContext(track: TrackRecord, points: TrackPlacemark[],
   return validateRouteContext({segmentStarts: parsed.segmentStarts, references: parsed.placemarks || []}, track.coordinates)
 }
 
-export function useTrackPlacemarks(track: TrackRecord, history?: PlacemarkHistory) {
+export function useTrackPlacemarks(track: TrackRecord, history?: PlacemarkHistory, options: {preparePhotos?: boolean} = {}) {
+  const preparePhotos = options.preparePhotos !== false
   const [raw, setRaw] = useState({id: track.id, points: track.placemarks || []})
   const [saved, setSaved] = useState({id: track.id, state: emptyDocument(), ready: false})
   const [route, setRoute] = useState<{id: string; context: PlacemarkRouteContext | null; ready: boolean; error: string}>({id: track.id, context: null, ready: false, error: ''})
@@ -106,7 +107,7 @@ export function useTrackPlacemarks(track: TrackRecord, history?: PlacemarkHistor
     publishRoute({id: track.id, context: null, ready: false, error: ''})
     setSaving(false); setEditing(false); setGrouping(false); setOrderError(''); setEditError(''); setGroupError('')
     const rawRead = loadTrackPlacemarks(track, controller.signal).then(result => {
-      void preparePlacemarkPhotoCache(track.id, result.flatMap(point => point.images), controller.signal).catch(() => {
+      if (preparePhotos) void preparePlacemarkPhotoCache(track.id, result.flatMap(point => point.images), controller.signal).catch(() => {
         // Image failures are shown per photo and never disable point editing.
       })
       if (!controller.signal.aborted) publishRaw({id: track.id, points: result})
@@ -140,7 +141,7 @@ export function useTrackPlacemarks(track: TrackRecord, history?: PlacemarkHistor
       }
     })
     return () => controller.abort()
-  }, [track.id, track.placemarks, attempt, historyStore])
+  }, [track.id, track.placemarks, attempt, historyStore, preparePhotos])
 
   function canWrite() {
     const controller = active.current

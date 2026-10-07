@@ -10,6 +10,8 @@ import { readPlacemarkOrder, writePlacemarkOrder } from './placemark-order-store
 import { readPlacemarkEdits, writePlacemarkEdits } from './placemark-edits-store.ts'
 import { readPlacemarkGroups, writePlacemarkGroups } from './placemark-groups-store.ts'
 import { readPlacemarkState, writePlacemarkState, PlacemarkStateConflictError } from './placemark-state-store.ts'
+import { readGeoMotionProject, writeGeoMotionProject, GeoMotionProjectError } from './geomotion-project-store.ts'
+import { readVideoMaterials, writeVideoMaterials, VideoMaterialsError, VIDEO_MATERIALS_MAX_BYTES } from './video-materials-store.ts'
 import { readPlacemarkPhoto, writePlacemarkPhoto, PlacemarkPhotoError } from './placemark-photos-store.ts'
 import { PLACEMARK_PHOTO_MAX_BYTES } from './track/placemark-photos.ts'
 import { preparePlacemarkPhotos, readPlacemarkPhotoAsset, listPlacemarkPhotoAssets } from './placemark-photo-assets-store.ts'
@@ -60,6 +62,22 @@ async function readJson(req: IncomingMessage): Promise<unknown> {
   return chunks.length ? JSON.parse(Buffer.concat(chunks).toString('utf8')) : {}
 }
 
+/** A preparation document is bounded independently from the larger track upload limit. */
+async function readVideoMaterialsJson(req: IncomingMessage): Promise<unknown> {
+  const limit = VIDEO_MATERIALS_MAX_BYTES + 4096
+  const chunks: Buffer[] = []
+  let size = 0, oversized = Number(req.headers['content-length']) > limit
+  // Discard overflow while draining this request so callers receive 413 rather than a socket reset.
+  for await (const chunk of req) {
+    const bytes = Buffer.from(chunk)
+    size += bytes.length
+    if (size > limit) oversized = true
+    if (oversized) chunks.length = 0
+    else chunks.push(bytes)
+  }
+  if (oversized) throw new VideoMaterialsError('视频素材准备最多 16 MiB', 413)
+  return chunks.length ? JSON.parse(Buffer.concat(chunks, size).toString('utf8')) : {}
+}
 async function readPhoto(req: IncomingMessage): Promise<Buffer> {
   const length = req.headers['content-length']
   if (length && Number(length) > PLACEMARK_PHOTO_MAX_BYTES) throw new PlacemarkPhotoError('图片最多 20 MiB', 413)
@@ -201,6 +219,18 @@ export function apply(ctx: Context): void {
             return json(res, 200, result)
           } finally {res.off('close', disconnect)}
         }
+        if (req.method === 'GET' && action === 'video-materials') return json(res, 200, {materials: readVideoMaterials(id)})
+        if (req.method === 'POST' && action === 'video-materials') {
+          const body = await readVideoMaterialsJson(req) as {id?: unknown; document?: unknown; expectedRevision?: unknown}
+          if (!body || typeof body !== 'object' || Array.isArray(body) || typeof body.id !== 'string') throw new VideoMaterialsError('缺少轨迹编号')
+          return json(res, 200, {materials: writeVideoMaterials(body.id, body.document, body.expectedRevision)})
+        }
+        if (req.method === 'GET' && action === 'geomotion-project') return json(res, 200, {project: readGeoMotionProject(id)})
+        if (req.method === 'POST' && action === 'geomotion-project') {
+          const body = await readJson(req) as {id?: unknown; project?: unknown; expectedRevision?: unknown}
+          if (!body || typeof body !== 'object' || Array.isArray(body) || typeof body.id !== 'string') throw new GeoMotionProjectError('缺少轨迹编号')
+          return json(res, 200, {project: writeGeoMotionProject(body.id, body.project, body.expectedRevision)})
+        }
         if (req.method === 'GET' && action === 'placemark-state') return json(res, 200, {state: readPlacemarkState(id)})
         if (req.method === 'POST' && action === 'placemark-state') {
           const body = await readJson(req) as {id?: unknown; revision?: unknown; data?: unknown}
@@ -279,8 +309,8 @@ export function apply(ctx: Context): void {
         }
         json(res, 404, {error: '接口不存在'})
       } catch (error) {
-        if (error instanceof PlacemarkPhotoError && error.status === 413) res.setHeader('connection', 'close')
-        if (!res.headersSent && !res.destroyed) json(res, error instanceof TrackAIError || error instanceof PlacemarkStateConflictError || error instanceof PlacemarkPhotoError || error instanceof TrackAgentStoreError ? error.status : 400, {error: error instanceof Error ? error.message : '操作失败'})
+        if ((error instanceof PlacemarkPhotoError || error instanceof VideoMaterialsError) && error.status === 413) res.setHeader('connection', 'close')
+        if (!res.headersSent && !res.destroyed) json(res, error instanceof TrackAIError || error instanceof PlacemarkStateConflictError || error instanceof PlacemarkPhotoError || error instanceof GeoMotionProjectError || error instanceof VideoMaterialsError || error instanceof TrackAgentStoreError ? error.status : 400, {error: error instanceof Error ? error.message : '操作失败'})
       }
     }})
     return () => {unregister()}

@@ -1,0 +1,346 @@
+{
+  "repository": "https://github.com/databandar/geomotion",
+  "commit": "a911219b1f0d704aa10f1fc915df65c21f612ec1",
+  "modifications": [
+    "Rewrote @geomotion/* package references to snapshot-relative TypeScript imports.",
+    "Normalized snapshot files to LF with a single final newline; snapshot hashes describe these canonical committed bytes. Upstream hashes remain unchanged."
+  ],
+  "files": [
+    {
+      "upstream": "packages/core/src/id.ts",
+      "snapshot": "core/id.ts",
+      "upstreamSha256": "9a677348f50c28ec30671c2597db61f9e41c74a0484e31f26c86a555830474a8",
+      "snapshotSha256": "f8a7c850ce87f0635a08624511663674c02c5d4d9cd6070120ec064f5c2483d7"
+    },
+    {
+      "upstream": "packages/core/src/index.ts",
+      "snapshot": "core/index.ts",
+      "upstreamSha256": "f73836f521101aa55d3933e75962f867b3af52ffd9e1b8751aa23bed52721676",
+      "snapshotSha256": "a0e3989780a524c4b71c18f1472880ad0ce2a86390b4d3121fee2c2cf340c846"
+    },
+    {
+      "upstream": "packages/core/src/numeric.ts",
+      "snapshot": "core/numeric.ts",
+      "upstreamSha256": "8c7092d7d068075b39ae7e5f27d7f7fe928cf75130031222198d3778f78f60dd",
+      "snapshotSha256": "99dc004db90a27049d5ea45adb2f429cac6b7a52fdd8b1ebb6edbdd77a057fed"
+    },
+    {
+      "upstream": "packages/core/src/palettes.ts",
+      "snapshot": "core/palettes.ts",
+      "upstreamSha256": "5535e3c19699470803d5b3535ec02ca02b3df310d4f54548d7cc3338fbde6c2e",
+      "snapshotSha256": "67383c4b85fbe72cd382095c233969830b8d35d1d50b08216821ed470e046077"
+    },
+    {
+      "upstream": "packages/core/src/units.ts",
+      "snapshot": "core/units.ts",
+      "upstreamSha256": "899abee6b212f23a6a31d348dc7d7d8ee378abd598ac4bf42c8375dedc24b8cb",
+      "snapshotSha256": "3c75388a2c2a693ab4ea74b2301e1dd4a6d868b207a8686c93c4d3cc6d45ad58"
+    },
+    {
+      "upstream": "packages/document/src/audio.ts",
+      "snapshot": "document/audio.ts",
+      "upstreamSha256": "dd2be242e38a5c1c5ea530e598ce1df62cb95173d01b04fbb326237d249a30ac",
+      "snapshotSha256": "761408d26b27f80b5d4ea50ae387767b7511709bb3501064e800d32c38a6a3dd"
+    },
+    {
+      "upstream": "packages/document/src/camera.ts",
+      "snapshot": "document/camera.ts",
+      "upstreamSha256": "60df1039bda43ff935a6303fac4ed77190189764a568f25006abe3d093030732",
+      "snapshotSha256": "c37cdb5174f1b483adee59440d1b87b203a23aca87f931a3292e6f7d8bee27ae"
+    },
+    {
+      "upstream": "packages/document/src/context.ts",
+      "snapshot": "document/context.ts",
+      "upstreamSha256": "6c1cc7ce62bdb38eec93baab63878cf0137cf071866ce0df43ef22f48c16daaa",
+      "snapshotSha256": "241178d6ed42e92e157ba599c66fec3e440d04974e62df2f04445ce8a89d10fe"
+    },
+    {
+      "upstream": "packages/document/src/history.ts",
+      "snapshot": "document/history.ts",
+      "upstreamSha256": "b4eef53eb405bca44222465787e8728d46a95da4822d72de0fbff12694f589ea",
+      "snapshotSha256": "970f4917c6ec9ec31306589cae689a284b093bce94d062c89bd6e77159bc3a70"
+    },
+    {
+      "upstream": "packages/document/src/index.ts",
+      "snapshot": "document/index.ts",
+      "upstreamSha256": "f134b4b36e7349c40863986621cedfb2ddfdfffbece485d6edabd122cb09cc5e",
+      "snapshotSha256": "cc65d2dcd36c7a717521f31b0a2d36ddf39115de9f76d0f3cb5dd73d808dbc18"
+    },
+    {
+      "upstream": "packages/document/src/migrations/1-to-2.ts",
+      "snapshot": "document/migrations/1-to-2.ts",
+      "upstreamSha256": "c4f17652e9e499a07f239a50295a3551ac5bdbd91334d6c0c440f60a1a764172",
+      "snapshotSha256": "50580b3593915043b3e5df3372fb63107a23f0b652481242ee2ca2b4fe65072f"
+    },
+    {
+      "upstream": "packages/document/src/migrations/2-to-3.ts",
+      "snapshot": "document/migrations/2-to-3.ts",
+      "upstreamSha256": "e1c59013d6a63197b315ef88387b45e992b0256b52db6dd3e501eb6535d42638",
+      "snapshotSha256": "3baba67ff0dda063a3d7795e1ff0e9d9af815fc0f251cb8526c8f5c7886d58f4"
+    },
+    {
+      "upstream": "packages/document/src/migrations/3-to-4.ts",
+      "snapshot": "document/migrations/3-to-4.ts",
+      "upstreamSha256": "c7c0ce6de8ea95ff9c5c02e5f8176f07a1bc39887be052ec31ed1449e55e75b5",
+      "snapshotSha256": "4254105a815c7cd894edcf5ece1fa08ad9c8ab4cce63dd6de27b2886c8097367"
+    },
+    {
+      "upstream": "packages/document/src/migrations/4-to-5.ts",
+      "snapshot": "document/migrations/4-to-5.ts",
+      "upstreamSha256": "834c2211ecdb26de4c1d1f9ff7bf0052a47a9568f2c888efd14b5745d87c562a",
+      "snapshotSha256": "8a4fce7e26f61b7e0b5a64852d29d60e58deb7075a25383d16f312c71bd2bd7b"
+    },
+    {
+      "upstream": "packages/document/src/migrations/5-to-6.ts",
+      "snapshot": "document/migrations/5-to-6.ts",
+      "upstreamSha256": "02c6a168d33c6ebea0e6bace8b2f04848b580449f0240ab5c16d10d222e5e31e",
+      "snapshotSha256": "e8cd5d5310b6a087e23925f24c42e1c917c0061e56e64e66f1711c1971d987a8"
+    },
+    {
+      "upstream": "packages/document/src/migrations/6-to-7.ts",
+      "snapshot": "document/migrations/6-to-7.ts",
+      "upstreamSha256": "73ae4558d0b2bccce52337a384426268bc5f8bcd33f845e26416daecdc369194",
+      "snapshotSha256": "bd31d4d6c3a7a89da57f572a8ea526ee7baff9581ba35e8c6d15a4b83259da6b"
+    },
+    {
+      "upstream": "packages/document/src/migrations/index.ts",
+      "snapshot": "document/migrations/index.ts",
+      "upstreamSha256": "3e0f1c2d3e672c3c21500f93ff340922241f7810ea8b8f90afd77ca0016abc15",
+      "snapshotSha256": "545b6983673bb536a40dfc6e020de662e3c4dd8dee8b845957e874709ae390b1"
+    },
+    {
+      "upstream": "packages/document/src/nodes.ts",
+      "snapshot": "document/nodes.ts",
+      "upstreamSha256": "478cdc77582328807d1926ec84e69bb2b67149bb7c921bf870fe622b3ecf2688",
+      "snapshotSha256": "8331a20009fb99ff71477ca5bbfdf7ee70c9305bc4dda4030680ce939b99ad5f"
+    },
+    {
+      "upstream": "packages/document/src/order.ts",
+      "snapshot": "document/order.ts",
+      "upstreamSha256": "fb170f0c1df4329f7f9e0534f3dedbcb6dc18f34d5674f7de700e741939077b5",
+      "snapshotSha256": "2e95df40f1678b0340febbcd692577cf07d80deb49c537f64663082f023cdd8b"
+    },
+    {
+      "upstream": "packages/document/src/project.ts",
+      "snapshot": "document/project.ts",
+      "upstreamSha256": "618c5363e3efc3c7ad2bb206c92d4924da55f55b44429c1c880a1360ca9a9859",
+      "snapshotSha256": "9568706dbcc2ea57ea12fd78423ead3959489d1ce2e7dcec95a4e458a756a997"
+    },
+    {
+      "upstream": "packages/document/src/ripple.ts",
+      "snapshot": "document/ripple.ts",
+      "upstreamSha256": "f44bdcea28a3e939d96303deb41ab34c8d8f1ec94585adfbbd163586a6a646af",
+      "snapshotSha256": "d79ce4e0670a4f66e89ef3b53e08a516b56c9d1bf9398dfee1eb1a1b4f2a7cfe"
+    },
+    {
+      "upstream": "packages/document/src/schema/containers.ts",
+      "snapshot": "document/schema/containers.ts",
+      "upstreamSha256": "a9dcf6121040b6839842f53fb3fdb8ffde93d760248f1e18b3160d495d65fcbc",
+      "snapshotSha256": "11de04d8cfe50d57b7328587c25201a83046b1b393caec6b82c13b62fdf036a9"
+    },
+    {
+      "upstream": "packages/document/src/schema/index.ts",
+      "snapshot": "document/schema/index.ts",
+      "upstreamSha256": "8344859bcda818dd04a34a3905f05eb0e9021aa986d2b9848e1cc10ce46c57b4",
+      "snapshotSha256": "ce1826234cc3ad74eaed9927233bcb585318d4fb51930a3f661c020904f844d9"
+    },
+    {
+      "upstream": "packages/document/src/schema/layers.ts",
+      "snapshot": "document/schema/layers.ts",
+      "upstreamSha256": "c1cc9716e1c4a68f393a2a56925cf33f44438eba3679e52f8250b291eb892b09",
+      "snapshotSha256": "9d84320447170aefa50b1ab24877d77d3dc16bf3386db4dfbaf9956343f35460"
+    },
+    {
+      "upstream": "packages/document/src/schema/meta.ts",
+      "snapshot": "document/schema/meta.ts",
+      "upstreamSha256": "0794582af733fc331a12580ea45b9c215b54d6a0a784c5ea1f1f72080fa7d678",
+      "snapshotSha256": "b0f756627c164a1518cd0e6ae0251443c4fc94360dea25436a68b8296f9418bc"
+    },
+    {
+      "upstream": "packages/document/src/story.ts",
+      "snapshot": "document/story.ts",
+      "upstreamSha256": "4531b6a7630eb5adb4454551f877038b90ab7a8bf21195f619dba07ae19e6f9f",
+      "snapshotSha256": "7c76e1b5fc1e2e6044205b4eea8eaf2fe85fadbfdb1e3c189e03966670c464a1"
+    },
+    {
+      "upstream": "packages/document/src/track.ts",
+      "snapshot": "document/track.ts",
+      "upstreamSha256": "d45a434a86c15496b028881a737f44b9c0740b49efbc637a9353adfd87ddc71b",
+      "snapshotSha256": "28cb38c786424df78445b9f455c2406856eef9c6188e7dc0c03f715512b5e410"
+    },
+    {
+      "upstream": "packages/document/src/transact.ts",
+      "snapshot": "document/transact.ts",
+      "upstreamSha256": "bc8749db573695f24cf3f4b18e4a28ad217d4d9fb1ba812fc92d37d3473a9546",
+      "snapshotSha256": "6b30a70ebb297e4d131a30d481f8ff396b54cfc06fc80c7791e6a846032b49f7"
+    },
+    {
+      "upstream": "packages/document/src/types.ts",
+      "snapshot": "document/types.ts",
+      "upstreamSha256": "151dca63fa369a3f125667ac7f399eec6e9fb2004b87cb2bf4148ab48e7b2472",
+      "snapshotSha256": "7eeb94b786a97af30424662790fa8c91f34dcdf964015508351778617f3ae4b3"
+    },
+    {
+      "upstream": "packages/document/src/window.ts",
+      "snapshot": "document/window.ts",
+      "upstreamSha256": "65d24a9b2b2832e6dc8d6486f335979a7a4996b8dc647e1ee5719150029de8dd",
+      "snapshotSha256": "ce2f37f07f6dd5edcdf7a21acce855a48509ea0f90b58a6b65248f866bba27fe"
+    },
+    {
+      "upstream": "packages/animation/src/behaviour.ts",
+      "snapshot": "animation/behaviour.ts",
+      "upstreamSha256": "072632de4bdf1d3adb53fa2c2d3da8162a37acfd9aa032b82b76cb34020eea96",
+      "snapshotSha256": "4220e89f0f307b891603d6d63c86eec498c4bd0b4fe2bcba60de90dd9dfae9e0"
+    },
+    {
+      "upstream": "packages/animation/src/easing.ts",
+      "snapshot": "animation/easing.ts",
+      "upstreamSha256": "38cfabd39d19f146daf0f54c5398da2609407e91c795e364065cdcaec4d0541a",
+      "snapshotSha256": "49cbc8051d4b58f4066209a83e31d2d4aeaaa332638a16de02dffbc389bd1898"
+    },
+    {
+      "upstream": "packages/animation/src/expr.ts",
+      "snapshot": "animation/expr.ts",
+      "upstreamSha256": "09a7b41a36dfc2ca184b3b9e524a1af2a95f1d6b26343a6d0fa230137032742a",
+      "snapshotSha256": "ae57915190d139329d09a0779492911be733b5d1cf50bd9af0e6f56a6688a74f"
+    },
+    {
+      "upstream": "packages/animation/src/index.ts",
+      "snapshot": "animation/index.ts",
+      "upstreamSha256": "207cf6a194eb7c37ce72055378e9d774370d00b906991a3b04495481abd56cc0",
+      "snapshotSha256": "3c790d9de218322c0a6737673e4cd54ea9e531c04bda4aff80a7095644d1a1a8"
+    },
+    {
+      "upstream": "packages/animation/src/track.ts",
+      "snapshot": "animation/track.ts",
+      "upstreamSha256": "ea8511dff3923d2b020a2d1adcf32ab294dff575e5870e5516d94a6f96a16447",
+      "snapshotSha256": "b1c9c8623afeb5e7240486207c3b50a817d7a87077f02c4071f074f7ce99eb2a"
+    },
+    {
+      "upstream": "packages/geometry/src/geo.ts",
+      "snapshot": "geometry/geo.ts",
+      "upstreamSha256": "8ca25a6aa3563fe9b3c7b695f3f91ba45438bc294503ad736871cfcf0e8a406f",
+      "snapshotSha256": "33a0641f65f0192cb113134bd8b407fc189185cfe215f4b2bac231c547dc3eb1"
+    },
+    {
+      "upstream": "packages/geometry/src/index.ts",
+      "snapshot": "geometry/index.ts",
+      "upstreamSha256": "77216c2c9d4652fe81a914fe8a1329369823eb8a317d4472b3350c4cad743aa6",
+      "snapshotSha256": "85e74acb6cb2bb8f7a3e62f71c5bf53426aecf18c52402a273821ad370f1d96c"
+    },
+    {
+      "upstream": "packages/evaluator/src/index.ts",
+      "snapshot": "evaluator/index.ts",
+      "upstreamSha256": "313a77c73a24c8ef9101efd35c0da6b5ad520aa3b1f1f06c68484824f2dd1599",
+      "snapshotSha256": "4f81aac0a662a521c55dee7d95319211e29592d293c5f55263209fb2fc4d3b87"
+    },
+    {
+      "upstream": "packages/evaluator/src/scene.ts",
+      "snapshot": "evaluator/scene.ts",
+      "upstreamSha256": "40e53b7f3990967777642f392682ca4d0fe83ad2358c6e255188a7c7fd6c74b7",
+      "snapshotSha256": "0ac8df14d2249426a01df30d865168fdb3b884b9e809d934b2b1c992639476db"
+    },
+    {
+      "upstream": "packages/entities/src/index.ts",
+      "snapshot": "entities/index.ts",
+      "upstreamSha256": "56dedd267eaf46cbe78a0853e1423fd547b259f7ae7fe62605b9e9a9da822316",
+      "snapshotSha256": "e318ceabfb86d24d771c5b6c4696e16aca63513fcea84468a6cd7c6f1d4bebfd"
+    },
+    {
+      "upstream": "packages/entities/src/regions.ts",
+      "snapshot": "entities/regions.ts",
+      "upstreamSha256": "7b2a8cd95325e3f3f9688c6438256591081cd1425926399262afb2bd84e68bd7",
+      "snapshotSha256": "8519845739f0569fd17b8fe3bd8f55b2be82b28c4bba3479237a5f0f96339f6c"
+    },
+    {
+      "upstream": "packages/entities/src/registry.ts",
+      "snapshot": "entities/registry.ts",
+      "upstreamSha256": "7db9c29f97a76fac48cf9ee77cda22dc5b31be6e80253658758b4eb65cb504d4",
+      "snapshotSha256": "89f08c209fddea900d488cde087383be4564498576ae40cec0cd33e3c9a5b6dc"
+    },
+    {
+      "upstream": "packages/entities/src/sets/india.ts",
+      "snapshot": "entities/sets/india.ts",
+      "upstreamSha256": "05ee120ecf9204bafdc69c643f0b1b358b4d7320cc99be6cfeb488c2eacbba48",
+      "snapshotSha256": "1b0db74300cbca9e26dc4b8c1717b4b518436fbb82e5691d7069292f8c7caf42"
+    },
+    {
+      "upstream": "packages/renderer/src/clouds.ts",
+      "snapshot": "renderer/clouds.ts",
+      "upstreamSha256": "152c43d4b3bb09c96357ea6ad69aa97b6927293e805f075864ab007dc5f6616b",
+      "snapshotSha256": "aa4ad971b28aef5889a5ed6d127a774fa9abc3876a25023c82c65b528d45a295"
+    },
+    {
+      "upstream": "packages/renderer/src/images.ts",
+      "snapshot": "renderer/images.ts",
+      "upstreamSha256": "345f1cbce85ab8e14767d051f8cc174d5cf169a205e327ce8180fb61f5a1b39a",
+      "snapshotSha256": "342337b2a79452bb7e0761c6ac0869bd2be2a105f3d0655828a1dd3e540fba73"
+    },
+    {
+      "upstream": "packages/renderer/src/index.ts",
+      "snapshot": "renderer/index.ts",
+      "upstreamSha256": "da186bf3f39de62d00f236b9aa7a5b83192b095f0500dd1ebb763076c135cb84",
+      "snapshotSha256": "a5229cfc375d81ccef38451cd1fdd683905f435abd34b1e562aa0b0aee43b7d2"
+    },
+    {
+      "upstream": "packages/renderer/src/labels.ts",
+      "snapshot": "renderer/labels.ts",
+      "upstreamSha256": "2fb2c70fdc8731829c7b2e83c8e877af1f073229ea2999362ea908a1b3b5e5bc",
+      "snapshotSha256": "9a8635638d20b3f506559efa162dc0275ba71470f2c18381238713bd7e3ea319"
+    },
+    {
+      "upstream": "packages/renderer/src/legend.ts",
+      "snapshot": "renderer/legend.ts",
+      "upstreamSha256": "bb7aee68552781fbbf43a3260d8e0b5c10b8f240a8ca0aede7a2ba4d89362391",
+      "snapshotSha256": "ef304de8717c27d8ce37905f11033c0bea964983d10028739e943e5f113a3558"
+    },
+    {
+      "upstream": "packages/renderer/src/overlay.ts",
+      "snapshot": "renderer/overlay.ts",
+      "upstreamSha256": "43e7a0250adf5b0728d67abc6eac6eaef61b09490d11ec8e3f22e59dc77d362b",
+      "snapshotSha256": "49faafd9d94a1507d9e6b0ad87fa76bb8beb95d835f6d11896c2f65a146ab34f"
+    },
+    {
+      "upstream": "packages/renderer/src/scene-types.ts",
+      "snapshot": "renderer/scene-types.ts",
+      "upstreamSha256": "1e1ff7b101e5d7bc21fbff0b2f43d6a74f1a543f7f8e613b27df885fc3e4db96",
+      "snapshotSha256": "1cd9a1399845d6c0fdf4cae8cf136eb149399b9793619bd11085838f7da0af81"
+    },
+    {
+      "upstream": "packages/renderer/src/styles.ts",
+      "snapshot": "renderer/styles.ts",
+      "upstreamSha256": "de185641ad850a5ebe4afe7ce7359f47eafe37ec98dee53e12bb77fbbea66735",
+      "snapshotSha256": "5e85375d8191723b90385510e54d9b3ee37b7019ab3804de31570448164f9469"
+    },
+    {
+      "upstream": "packages/map/src/basemaps.ts",
+      "snapshot": "map/basemaps.ts",
+      "upstreamSha256": "4a7142e704055b09354902b8f75b9754ca882ecf565d1304b4404026e133e0ea",
+      "snapshotSha256": "6f3a01b3c3f21f98248dc794c799f8dba1828a2707d6a55117b3c7016868b794"
+    },
+    {
+      "upstream": "packages/map/src/fake-map.ts",
+      "snapshot": "map/fake-map.ts",
+      "upstreamSha256": "d5e56cbc7f69c2555270fe1634e064b7a288de23626266e3441ff3a3a6af4368",
+      "snapshotSha256": "2d456c177d55b56c45dc275092696bb08202a37fa29b2b2c5181f35794cefbbd"
+    },
+    {
+      "upstream": "packages/map/src/geojson.ts",
+      "snapshot": "map/geojson.ts",
+      "upstreamSha256": "9de1fa0afea686653f8c13ac62a925bb691b51f528d360e8a497035cc3ec68ec",
+      "snapshotSha256": "d52124a71295234bbfde230ed95531554cff79da24b56d8cc7d2fc3b8de82a8b"
+    },
+    {
+      "upstream": "packages/map/src/index.ts",
+      "snapshot": "map/index.ts",
+      "upstreamSha256": "944aafba0bbb50fc8b84ac0761d4727d3ad562cce4cf6da4e543b1a80baca15b",
+      "snapshotSha256": "53e12ce4341b5c055f50fea071d7528647e2f59a36f3ed8ba1335d5372ae35bb"
+    },
+    {
+      "upstream": "packages/map/src/mapsync.ts",
+      "snapshot": "map/mapsync.ts",
+      "upstreamSha256": "9c4f5f128f8471ff3ff933a8adcf3a6b9f7f6f2a9f97f078af8400e9830a0b2d",
+      "snapshotSha256": "1dce94cbaac7dc1f4bf607098fe2e50f2b8af342e79015efad44b6745376bf28"
+    }
+  ]
+}

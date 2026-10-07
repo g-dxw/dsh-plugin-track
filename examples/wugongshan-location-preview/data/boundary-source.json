@@ -1,0 +1,49 @@
+{
+  "schema": "cqai-track-location-boundary-source@1",
+  "downloadedAt": "2026-10-07T04:27:52.4068769Z",
+  "purpose": "SC02 regional location highlight only",
+  "apiUrl": "https://www.geoboundaries.org/api/current/gbOpen/CHN/ADM1/",
+  "downloadUrl": "https://media.githubusercontent.com/media/wmgeolab/geoBoundaries/9469f09/releaseData/gbOpen/CHN/ADM1/geoBoundaries-CHN-ADM1.geojson",
+  "sourceReference": "https://github.com/wmgeolab/geoBoundaries/raw/9469f09/releaseData/gbOpen/CHN/ADM1/geoBoundaries-CHN-ADM1.geojson",
+  "gitCommit": "9469f09",
+  "boundaryId": "CHN-ADM1-43563684",
+  "boundaryYearRepresented": "2019",
+  "sourceDataUpdateDate": "Thu Jan 19 07:31:04 2023",
+  "buildDate": "Dec 12, 2023",
+  "boundarySource": "geoBoundaries, Wikimedia Commons",
+  "sourceLicense": "Public Domain",
+  "geoboundariesProductLicense": "CC BY 4.0",
+  "licenseUrl": "https://www.geoboundaries.org/index.html",
+  "attribution": "geoBoundaries / www.geoboundaries.org",
+  "crs": {
+    "type": "name",
+    "properties": {
+      "name": "urn:ogc:def:crs:OGC:1.3:CRS84"
+    }
+  },
+  "crsInterpretation": "OGC CRS84: WGS84 geographic longitude-latitude, no GCJ-02 conversion",
+  "featureCount": 2,
+  "selected": [
+    {
+      "geometryType": "Polygon",
+      "shapeID": "43563684B87813050901813",
+      "displayName": "江西",
+      "shapeName": "Jiangxi Province"
+    },
+    {
+      "geometryType": "Polygon",
+      "shapeID": "43563684B64987462919315",
+      "displayName": "湖南",
+      "shapeName": "Hunan Province"
+    }
+  ],
+  "fullDownloadBytes": 270578,
+  "fullDownloadSha256": "3a00467a0db9b4136facb5f2f3d0edbfd96adb15651cfdf63991da9281030e85",
+  "selectedSha256": "da3298ad7b832bc21785f815d124c31da580acf3812ed31f39208d0b711f47b8",
+  "limitations": [
+    "Regional cartographic location illustration only; not survey-grade navigation or legal boundary evidence.",
+    "Province extent data represents 2019, not a newly surveyed current boundary.",
+    "No user track or placemark source data changed."
+  ],
+  "fullDownloadHashVerified": true
+}
