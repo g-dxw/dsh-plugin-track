@@ -109,13 +109,14 @@ describe('native track Agent project workspaces', () => {
     const library = ensureTrackAgentWorkspace(env)
     const libraryContext = readFileSync(join(library.path, 'track-context.json'), 'utf8')
     const first = ensureTrackAgentWorkspace(env, id)
-    for (const page of ['overview', 'edit', 'resources', 'image-create', 'image-history']) {
+    for (const page of ['overview', 'edit', 'resources', 'image-create', 'image-history', 'animation', 'video-script']) {
       writeTrackAgentContext({page, trackId: id}, env)
       expect(snapshot(id)).toMatchObject({current: {page, trackId: id, track: {name: '武功山反穿', points: 2}}})
+      if (page === 'image-history') expect(snapshot(id).current.pageTitle).toBe('AI 图片历史')
     }
     expect(snapshot(id).current.track.coordinates).toBeUndefined()
     expect(ensureTrackAgentWorkspace(env, id).path).toBe(first.path)
-    expect(snapshot(id).current.pageTitle).toBe('AI 图片历史')
+    expect(snapshot(id).current.pageTitle).toBe('轨迹视频制作')
     expect(readFileSync(join(library.path, 'track-context.json'), 'utf8')).toBe(libraryContext)
     expect(readFileSync(join(directory, 'track.json'), 'utf8')).toBe(original)
     expect(readFileSync(join(directory, 'source.gpx'), 'utf8')).toBe('<gpx>original</gpx>')

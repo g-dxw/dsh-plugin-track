@@ -51,5 +51,3 @@ export function localResourceFile(value: unknown): {trackId: string; assetId: st
       && trackId && assetId && RESOURCE_ID.test(trackId) && RESOURCE_ID.test(assetId) ? {trackId, assetId} : null
   } catch {return null}
 }
-
-

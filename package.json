@@ -1,6 +1,6 @@
 {
   "name": "cqai-dsh-plugin-track",
-  "version": "0.1.0",
+  "version": "0.1.0-beta.3",
   "description": "轨迹：二维与 3D 沙盘、卫星底图、分析编辑、SVG 标注和 AI 动画美化",
   "license": "AGPL-3.0-only",
   "type": "module",
@@ -17,10 +17,23 @@
   "files": [
     "lib/index.js",
     "lib/client.js",
+    "src/",
+    "tests/",
+    "scripts/",
+    "licenses/",
+    "docs/",
     "cordis.patch.yml",
     "README.md",
     "PROVENANCE.md",
-    "LICENSE"
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md",
+    "BUILDING.md",
+    "SOURCE-SNAPSHOT.json",
+    "tsdown.config.ts",
+    "tsconfig.json",
+    "vitest.config.ts",
+    "build-inputs/",
+    ".yarnrc.yml"
   ],
   "dsh": {
     "bundle": {
@@ -87,5 +100,18 @@
     "typescript": "~5.7.2",
     "vite": "8.2.1",
     "vitest": "4.1.8"
+  },
+  "repository": {
+    "url": "git+https://github.com/g-dxw/dsh-plugin-track.git",
+    "type": "git"
+  },
+  "homepage": "https://github.com/g-dxw/dsh-plugin-track#readme",
+  "bugs": {
+    "url": "https://github.com/g-dxw/dsh-plugin-track/issues"
+  },
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org/",
+    "tag": "beta",
+    "access": "public"
   }
 }

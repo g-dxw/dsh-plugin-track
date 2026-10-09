@@ -367,16 +367,3 @@ export async function resourceFile(id: string, assetId: string, env: NodeJS.Proc
   if (!stat?.isFile() || stat.size !== asset.bytes) throw new ResourceError('媒体文件不存在或内容已改变',404)
   return {path,mime:asset.mime,bytes:stat.size}
 }
-
-
-
-
-
-
-
-
-
-
-
-
-

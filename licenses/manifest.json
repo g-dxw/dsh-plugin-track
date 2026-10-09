@@ -1,0 +1,287 @@
+{
+  "schemaVersion": 1,
+  "evidenceDate": "2026-10-08",
+  "collection": "License files copied byte-for-byte from the installed versions in node_modules. Public official npm metadata supplies source tarball URLs and integrity values; no npm credentials are used.",
+  "packages": [
+    {
+      "name": "maplibre-gl",
+      "version": "5.24.0",
+      "license": "BSD-3-Clause",
+      "licenseFile": "licenses/maplibre-gl-5.24.0-LICENSE.txt",
+      "licenseSourcePath": "node_modules/maplibre-gl/LICENSE.txt",
+      "licenseSha256": "ee5fc05a0677eaf69601d2c7db0d9ecd6cc27c3abc1d0733bc9ed34707cf8ef2",
+      "packageJsonSha256": "196798d4536aa083aace0e2135279da067fc6582de9a0e86b8144397190d7e95",
+      "repositoryUrl": "https://github.com/maplibre/maplibre-gl-js",
+      "npmVersionUrl": "https://registry.npmjs.org/maplibre-gl/5.24.0",
+      "sourceTarballUrl": "https://registry.npmjs.org/maplibre-gl/-/maplibre-gl-5.24.0.tgz",
+      "sourceTarballIntegrity": "sha512-ALyFxgtd5R+65UqZ/++lOqwWcC0SNho9c27fYSyLmG7AfnAul2o46F05aDJGPbFU57wos9dgcIySHs0Xe6ia3A==",
+      "gitHead": "fd31bd85967c19446d836236e93021fb10ffe30d",
+      "status": "license-text-copied"
+    },
+    {
+      "name": "three",
+      "version": "0.185.1",
+      "license": "MIT",
+      "licenseFile": "licenses/three-0.185.1-LICENSE",
+      "licenseSourcePath": "node_modules/three/LICENSE",
+      "licenseSha256": "8b378ebe60e2fe500158cb0ac71cb5e8b7d92953c2abcc63a0eb90499653b5bc",
+      "packageJsonSha256": "1d5c438acdc1fe5a52fb8ede2e417afd91fec91d22275c40f7b739591b24e4df",
+      "repositoryUrl": "https://github.com/mrdoob/three.js",
+      "npmVersionUrl": "https://registry.npmjs.org/three/0.185.1",
+      "sourceTarballUrl": "https://registry.npmjs.org/three/-/three-0.185.1.tgz",
+      "sourceTarballIntegrity": "sha512-5aojFCXKwnjBRZvUnt3WFfEcvUJgkN5LlijRFN95hMy8WVkG4I0QNcJE+OuWvuJ0bOdStrbfXn0pkd6/QyiAlg==",
+      "gitHead": "2431a09f46f34c560bc8e44b33be0e567723d5b9",
+      "status": "license-text-copied"
+    },
+    {
+      "name": "chart.js",
+      "version": "4.5.1",
+      "license": "MIT",
+      "licenseFile": "licenses/chart.js-4.5.1-LICENSE.md",
+      "licenseSourcePath": "node_modules/chart.js/LICENSE.md",
+      "licenseSha256": "41a84aa2caba645f966a18d9c2056b73e6d3a81d80bc0046bc0011a2634d4cce",
+      "packageJsonSha256": "27ef92f77f147da2897d6ade86f84b1ea2eb14193d077668e1e947e03f0ca0c9",
+      "repositoryUrl": "https://github.com/chartjs/Chart.js",
+      "npmVersionUrl": "https://registry.npmjs.org/chart.js/4.5.1",
+      "sourceTarballUrl": "https://registry.npmjs.org/chart.js/-/chart.js-4.5.1.tgz",
+      "sourceTarballIntegrity": "sha512-GIjfiT9dbmHRiYi6Nl2yFCq7kkwdkp1W/lp2J99rX0yo9tgJGn3lKQATztIjb5tVtevcBtIdICNWqlq5+E8/Pw==",
+      "gitHead": "9c5cf9fac7ec04a71b516e2aff3f7d76876be369",
+      "status": "license-text-copied"
+    },
+    {
+      "name": "chartjs-plugin-zoom",
+      "version": "2.2.0",
+      "license": "MIT",
+      "licenseFile": "licenses/chartjs-plugin-zoom-2.2.0-LICENSE.md",
+      "licenseSourcePath": "node_modules/chartjs-plugin-zoom/LICENSE.md",
+      "licenseSha256": "faf50ba4a21e0c740c96e9bbce1b862273cfe5dd2cdf200d3271a781094c6ba9",
+      "packageJsonSha256": "e9f84d39a5866af3a4fc1a9ce1784819a57a1bae1b119b66518f07e992cdf358",
+      "repositoryUrl": "https://github.com/chartjs/chartjs-plugin-zoom",
+      "npmVersionUrl": "https://registry.npmjs.org/chartjs-plugin-zoom/2.2.0",
+      "sourceTarballUrl": "https://registry.npmjs.org/chartjs-plugin-zoom/-/chartjs-plugin-zoom-2.2.0.tgz",
+      "sourceTarballIntegrity": "sha512-in6kcdiTlP6npIVLMd4zXZ08PDUXC52gZ4FAy5oyjk1zX3gKarXMAof7B9eFiisf9WOC3bh2saHg+J5WtLXZeA==",
+      "gitHead": "4aa6d11aed1c271bc8698bd414adc9587e1bfbb9",
+      "status": "license-text-copied"
+    },
+    {
+      "name": "chartjs-plugin-crosshair",
+      "version": "2.0.0",
+      "license": "MIT",
+      "licenseFile": "licenses/chartjs-plugin-crosshair-2.0.0-LICENSE.md",
+      "licenseSourcePath": "node_modules/chartjs-plugin-crosshair/LICENSE.md",
+      "licenseSha256": "7ee272e4e7a70baf09d76f6e8a333c76660d9010a09725d90f04558516dff2c7",
+      "packageJsonSha256": "a709466186cce708c723ab330e2532da7b2ae63c021396363a9fad9d3508873f",
+      "repositoryUrl": "https://github.com/abelheinsbroek/chartjs-plugin-crosshair",
+      "npmVersionUrl": "https://registry.npmjs.org/chartjs-plugin-crosshair/2.0.0",
+      "sourceTarballUrl": "https://registry.npmjs.org/chartjs-plugin-crosshair/-/chartjs-plugin-crosshair-2.0.0.tgz",
+      "sourceTarballIntegrity": "sha512-Vs6strRvYpzL92v40r/rAWhh+7au8VnfyC/m2ZHXcXeLEWeFjDgMvXjWdX+eARhbgHQo+uGIKyq9fmkS79GIyQ==",
+      "gitHead": "d5b13d6a025f674756bd20f6e88f742a55bbf2d4",
+      "status": "license-text-copied"
+    },
+    {
+      "name": "@panzoom/panzoom",
+      "version": "4.6.2",
+      "license": "MIT",
+      "licenseFile": "licenses/panzoom-panzoom-4.6.2-MIT-License.txt",
+      "licenseSourcePath": "node_modules/@panzoom/panzoom/MIT-License.txt",
+      "licenseSha256": "db74524b3ab3853bcfc7300dade1f5e0176e59ed3c0cff43848a2c300091a22c",
+      "packageJsonSha256": "99415ab7c9987554eda2f07a5b257390a2319620c589332ae9d99c54514bdfec",
+      "repositoryUrl": "https://github.com/timmywil/panzoom",
+      "npmVersionUrl": "https://registry.npmjs.org/%40panzoom%2Fpanzoom/4.6.2",
+      "sourceTarballUrl": "https://registry.npmjs.org/@panzoom/panzoom/-/panzoom-4.6.2.tgz",
+      "sourceTarballIntegrity": "sha512-Zn3B5/hwa6eYIPRSKX0xf2clv8nviTX8AnAU5kU/EugiTDhG41ya2wlBqYrZJYCWQROr/5XkWObZhIkepi89qw==",
+      "gitHead": "cb243f464ba87de754febdde1987ae851087ec30",
+      "status": "license-text-copied"
+    },
+    {
+      "name": "immer",
+      "version": "10.1.1",
+      "license": "MIT",
+      "licenseFile": "licenses/immer-10.1.1-LICENSE",
+      "licenseSourcePath": "node_modules/immer/LICENSE",
+      "licenseSha256": "99cf22f6960a6fe228ec84ea9aefb0d75b27999ece83a3a9801e1c2081fa270b",
+      "packageJsonSha256": "bad3a972f63dce11885035f1327795bde2f4e613abcc8a81ce027094d633adab",
+      "repositoryUrl": "https://github.com/immerjs/immer",
+      "npmVersionUrl": "https://registry.npmjs.org/immer/10.1.1",
+      "sourceTarballUrl": "https://registry.npmjs.org/immer/-/immer-10.1.1.tgz",
+      "sourceTarballIntegrity": "sha512-s2MPrmjovJcoMaHtx6K11Ra7oD05NT97w1IC5zpMkT6Atjr7H8LjaDd81iIxUYpMKSRRNMJE703M1Fhr/TctHw==",
+      "gitHead": "e2d222bd4fb26abded04075c936290715e9ee335",
+      "status": "license-text-copied"
+    },
+    {
+      "name": "mediabunny",
+      "version": "1.24.2",
+      "license": "MPL-2.0",
+      "licenseFile": "licenses/mediabunny-1.24.2-LICENSE",
+      "licenseSourcePath": "node_modules/mediabunny/LICENSE",
+      "licenseSha256": "3f3d9e0024b1921b067d6f7f88deb4a60cbe7a78e76c64e3f1d7fc3b779b9d04",
+      "packageJsonSha256": "236429e3ebc169653a554f5ef25d5c697ec84c5eb043082d68e24c0687a5530e",
+      "repositoryUrl": "https://github.com/Vanilagy/mediabunny",
+      "npmVersionUrl": "https://registry.npmjs.org/mediabunny/1.24.2",
+      "sourceTarballUrl": "https://registry.npmjs.org/mediabunny/-/mediabunny-1.24.2.tgz",
+      "sourceTarballIntegrity": "sha512-+H2Jha7D8C92F1fysdN+nmBBAOgVV+pNv/Pxc+c//qo2E/idnv8MsZrft7VJsFE5WjK30ESkwW5ezM0oceFIkg==",
+      "gitHead": "9926004401f25dab18985e984eaffbd877ef1b85",
+      "status": "license-text-copied"
+    },
+    {
+      "name": "@kurkle/color",
+      "version": "0.3.4",
+      "license": "MIT",
+      "licenseFile": "licenses/kurkle-color-0.3.4-LICENSE.md",
+      "licenseSourcePath": "node_modules/@kurkle/color/LICENSE.md",
+      "licenseSha256": "89ba0032731489153d552db918b727feb05128cf9eca20092875a9ad14147671",
+      "packageJsonSha256": "a98b88e4091c726adfe86f2076bbc06beca7fe90ef93b886c1814bada46ac1c1",
+      "repositoryUrl": "https://github.com/kurkle/color",
+      "npmVersionUrl": "https://registry.npmjs.org/%40kurkle%2Fcolor/0.3.4",
+      "sourceTarballUrl": "https://registry.npmjs.org/@kurkle/color/-/color-0.3.4.tgz",
+      "sourceTarballIntegrity": "sha512-M5UknZPHRu3DEDWoipU6sE8PdkZ6Z/S+v4dD+Ke8IaNlpdSQah50lz1KtcFBa2vsdOnwbbnxJwVM4wty6udA5w==",
+      "gitHead": "a0c1acd578abdff7918fcd4365a9651639872412",
+      "status": "license-text-copied"
+    },
+    {
+      "name": "hammerjs",
+      "version": "2.0.8",
+      "license": "MIT",
+      "licenseFile": "licenses/hammerjs-2.0.8-LICENSE.md",
+      "licenseSourcePath": "node_modules/hammerjs/LICENSE.md",
+      "licenseSha256": "4d93df6544df47a49b25add3aff67ff9ff47e4756d85dd0c3e1beba8520ab9f2",
+      "packageJsonSha256": "4acd8aa8b065441568c12ccbf438bedb08e4c532fbaeb90837e11ae5a6a1d61e",
+      "repositoryUrl": "https://github.com/hammerjs/hammer.js",
+      "npmVersionUrl": "https://registry.npmjs.org/hammerjs/2.0.8",
+      "sourceTarballUrl": "https://registry.npmjs.org/hammerjs/-/hammerjs-2.0.8.tgz",
+      "sourceTarballIntegrity": "sha512-tSQXBXS/MWQOn/RKckawJ61vvsDpCom87JgxiYdGwHdOa0ht0vzUWDlfioofFCRU0L+6NGDt6XzbgoJvZkMeRQ==",
+      "gitHead": "49731688380a91be07653ee2491ab48ece7952b5",
+      "status": "license-text-copied"
+    }
+  ],
+  "vendored": [
+    {
+      "name": "@tmcw/togeojson (vendored fork)",
+      "version": null,
+      "sourcePath": "src/track/vendor/toGeoJSON.ts",
+      "sourceSha256": "7c8eae3939bbc4971033bff72efdc18a02802c9e9d015e442c58432a0c0d405f",
+      "normalizedBodySha256": "db0f9daade474f68156f7d82dad4b30c01b681823e86afdfc89b9ba437c3845d",
+      "forkRepositoryUrl": "https://github.com/g-dxw/VoyageTrack",
+      "forkCommit": "4a4d8f49711868d7b96917322cb05bdd6333428c",
+      "forkSourceUrl": "https://github.com/g-dxw/VoyageTrack/blob/4a4d8f49711868d7b96917322cb05bdd6333428c/web/src/lib/vendor/toGeoJSON/toGeoJSON.js",
+      "forkGitBlobSha": "70028aabb68e2291431ef08411796ee9b2dc873c",
+      "upstreamRepositoryUrl": "https://github.com/placemark/togeojson",
+      "upstreamRepositoryFormerUrl": "https://github.com/tmcw/togeojson",
+      "upstreamLicense": "BSD-2-Clause",
+      "licenseFile": "licenses/togeojson-upstream-BSD-2-Clause-LICENSE.txt",
+      "licenseSha256": "7cb180a3e5857ed9f27742bee2371b0a3055e3d302877ed91f62f390a12f5080",
+      "licenseSourceUrl": "https://github.com/placemark/togeojson/blob/71b38c6ffaf016b2040225004b3a7ab122d2ed2a/LICENSE",
+      "licenseSourceCommit": "71b38c6ffaf016b2040225004b3a7ab122d2ed2a",
+      "licenseSourceGitBlobSha": "c2c7dd68537f20ec6655164081e7f69f0abbe7b6",
+      "evidenceFile": "licenses/togeojson-evidence.json",
+      "evidenceSha256": "8a128712305f1be52412a39cb2f90f945a715e4fe03e8f3bd191d67aa339df5d",
+      "status": "verified-upstream-derived-fork",
+      "upstreamComparison": {
+        "baselineVersion": "5.8.1",
+        "baselineCommit": "71b38c6ffaf016b2040225004b3a7ab122d2ed2a",
+        "tagUrl": "https://github.com/placemark/togeojson/tree/v5.8.1",
+        "tagMetadataUrl": "https://api.github.com/repos/placemark/togeojson/tags?per_page=100",
+        "npmVersionUrl": "https://registry.npmjs.org/@tmcw/togeojson/5.8.1",
+        "sourceTarballUrl": "https://registry.npmjs.org/@tmcw/togeojson/-/togeojson-5.8.1.tgz",
+        "sourceTarballIntegrity": "sha512-2YNrbis3l5kS0XrYwiHEZcGwiRp0MJ5CvwGwtMWp2z2tsVlskeec2qgvKHnF0RCwI5GnjrrBOoKsWfndEnd3LA==",
+        "sourceTarballIntegrityVerified": true,
+        "sourceTarballSha256": "8768fcb090504243d297242ed0b32415b3991c6da9b287a21b00f6660a322f79",
+        "distributedSourcePath": "package/dist/togeojson.es.mjs",
+        "distributedSourceSha256": "dda8634a270ecae88f3325e604294ef3d97e432903840cb4166d3d916192ad62",
+        "license": "BSD-2-Clause",
+        "licenseSourceUrl": "https://github.com/placemark/togeojson/blob/71b38c6ffaf016b2040225004b3a7ab122d2ed2a/LICENSE",
+        "licenseSha256": "7cb180a3e5857ed9f27742bee2371b0a3055e3d302877ed91f62f390a12f5080",
+        "licenseGitBlobSha": "c2c7dd68537f20ec6655164081e7f69f0abbe7b6",
+        "functionComparison": {
+          "method": "Parse the local JavaScript body and the official 5.8.1 ES module with TypeScript; lower official optional chaining to ES2019, recursively compare syntax kinds and literal/identifier values, ignore comments, whitespace, parentheses, positions, and trailing commas. Variable declaration kinds remain distinguished.",
+          "parserVersion": "5.7.3",
+          "localTopLevelFunctions": 62,
+          "baselineTopLevelFunctions": 62,
+          "structurallyIdenticalFunctions": 57,
+          "compilerDifferences": [
+            {
+              "function": "extractProperties",
+              "difference": "Optional-chain temporary variable is named and placed differently; the parentNode lookup and condition are unchanged."
+            },
+            {
+              "function": "getPlacemark",
+              "difference": "Optional-chain temporary variable name differs; visibility lookup and condition are unchanged."
+            },
+            {
+              "function": "getGroundOverlay",
+              "difference": "Optional-chain temporary variable name differs; the optional box.bbox condition uses equivalent null guards instead of a conditional expression."
+            }
+          ],
+          "forkModifications": [
+            {
+              "function": "coordPair",
+              "difference": "TCX AltitudeMeters callback appends null for unparseable elevation, then appends the time value to the coordinate array."
+            },
+            {
+              "function": "gxCoords",
+              "difference": "KML track coordinates append the matching when value, omit coordinate arrays with fewer than two components, and use coordinates.length > 1 for LineString instead of > 2."
+            }
+          ],
+          "nearbyReleaseComparison": {
+            "5.7.0": 53,
+            "5.8.0": 56,
+            "5.8.1": 57,
+            "6.0.0": 41
+          },
+          "baselineDistinction": "The rotateBox function matches the 5.8.1 rotation correction and differs structurally from 5.8.0. This pins a comparison baseline, not an unmodified historical npm identity for the fork."
+        },
+        "sourceMappedFiles": [
+          {
+            "sourcePath": "lib/tcx.ts",
+            "sourceUrl": "https://github.com/placemark/togeojson/blob/71b38c6ffaf016b2040225004b3a7ab122d2ed2a/lib/tcx.ts",
+            "sourceSha256": "dc01fa30cafc9c950c539ea56cb0a37b2670ea455f1567d9a3bf7109de7855a0",
+            "sourceMapBytesMatch": true
+          },
+          {
+            "sourcePath": "lib/kml/geometry.ts",
+            "sourceUrl": "https://github.com/placemark/togeojson/blob/71b38c6ffaf016b2040225004b3a7ab122d2ed2a/lib/kml/geometry.ts",
+            "sourceSha256": "f6ac4ce20fe41654ea31471f8bb13c1037f32aeb50a5e802b8fa9afb22a7095b",
+            "sourceMapBytesMatch": true
+          },
+          {
+            "sourcePath": "lib/kml/ground_overlay.ts",
+            "sourceUrl": "https://github.com/placemark/togeojson/blob/71b38c6ffaf016b2040225004b3a7ab122d2ed2a/lib/kml/ground_overlay.ts",
+            "sourceSha256": "8da140662592624151a2055d4ba5b5ffd22c5fc12730c91d762c5a4bbf2d0751",
+            "sourceMapBytesMatch": true
+          }
+        ]
+      },
+      "note": "The local normalized JavaScript body matches the fixed fork exactly. Its upstream code is verified as BSD-2-Clause by comparison with the official 5.8.1 source and npm artifact; the complete upstream notice is retained. The edited fork has two coordinate changes plus compiler formatting differences, so no unmodified exact npm version is claimed. Track has not changed the fork runtime body."
+    },
+    {
+      "name": "GeoMotion",
+      "version": "a911219b1f0d704aa10f1fc915df65c21f612ec1",
+      "repositoryUrl": "https://github.com/databandar/geomotion",
+      "sourceCommitUrl": "https://github.com/databandar/geomotion/tree/a911219b1f0d704aa10f1fc915df65c21f612ec1",
+      "sourceManifestPath": "src/track/vendor/geomotion/source-manifest.json",
+      "sourceManifestSha256": "874452b16b18996e37f7ec795c8393fcc08de88b3be3b2dceb3811ce5a7d8ec9",
+      "sourceNoticePath": "src/track/vendor/geomotion/SOURCE.md",
+      "sourceNoticeSha256": "79ec22b9770be3a7aa952f0cf64c6b25a1372d88859ad362d9efe51b280cf6c4",
+      "license": null,
+      "status": "upstream-license-undeclared",
+      "distributionBasis": "Publisher confirmed permission obtained and explicitly requested npm publication on 2026-10-08; no written permission terms were attached.",
+      "note": "The pinned upstream repository does not declare a license. It is not relicensed as Track AGPL-3.0-only. For this npm publication, the publisher stated that permission had been obtained and explicitly requested publication. Written permission terms were not attached to this snapshot. Copyright remains with the upstream authors; this notice does not grant a new public license or infer one from repository visibility."
+    }
+  ],
+  "trackLicense": {
+    "project": "Track / Wanderer-derived code",
+    "license": "AGPL-3.0-only",
+    "files": [
+      {
+        "path": "LICENSE",
+        "sha256": "20b067f86de375aae6db0f283ab2e65de24d537733b89bd58432c101259d84cf"
+      },
+      {
+        "path": "src/track/LICENSE",
+        "sha256": "20b067f86de375aae6db0f283ab2e65de24d537733b89bd58432c101259d84cf"
+      }
+    ],
+    "provenancePath": "PROVENANCE.md",
+    "upstreamSourceUrl": "https://github.com/g-dxw/VoyageTrack/tree/4a4d8f49711868d7b96917322cb05bdd6333428c"
+  }
+}

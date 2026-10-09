@@ -143,8 +143,19 @@ style 的 sprite 指向 MapTiler，没有 key 会 401；OpenFreeMap 不提供 sp
 AGPL-3.0 的传染性不区分「这是上游文件」还是「这是包含了它们的程序」。`package.json`
 的 `license` 字段是 `AGPL-3.0-only`。
 
-`src/track/vendor/toGeoJSON.ts` 那一个文件来自 ISC 许可的 `@tmcw/togeojson`，比 AGPL 更
-宽松，放在 AGPL 的程序里没有冲突。
+`src/track/vendor/toGeoJSON.ts` 的固定分叉来源为上表的 VoyageTrack commit。移除 Track
+注释头并将 CRLF 规范为 LF 后，JavaScript 正文与该分叉文件逐字一致。原先的 ISC
+标注错误：`@tmcw/togeojson` 官方上游许可为 **BSD-2-Clause**。完整版权声明与许可
+原文保留在 [许可证文件](licenses/togeojson-upstream-BSD-2-Clause-LICENSE.txt)，
+来源、哈希及比对结果见 [证据记录](licenses/togeojson-evidence.json)。
+
+以官方 [5.8.1 源码](https://github.com/placemark/togeojson/tree/71b38c6ffaf016b2040225004b3a7ab122d2ed2a)
+及其 npm 发布包为比对基线，62 个顶层函数中 57 个语法结构一致，3 个仅有可选链
+编译形式差异。分叉保留另外 2 个函数的改动：TCX `coordPair` 在坐标中追加无效
+海拔占位与时间；KML `gxCoords` 追加时间、过滤少于两个分量的坐标，并将两点
+轨迹输出为 LineString。Track 没有改写这些分叉逻辑。此处确认 BSD 上游代码的
+来源与许可，不把带改动的分叉认定为某个逐字相同的 npm 版本，也不以 BSD 声明
+替代 VoyageTrack/Track 项目改动的许可。
 
 第三方 npm 依赖（`maplibre-gl` BSD-3-Clause、`three` MIT、`chart.js` / `chartjs-plugin-zoom` /
 `chartjs-plugin-crosshair` / `@panzoom/panzoom` MIT）与移植代码无关，各自保留原许可证。
@@ -179,6 +190,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ## 地图镜头编辑集成本地原型（2026-10-04）
 
 - GeoMotion 的工程、动画求值、路线同步与文字合成核心固定于 `databandar/geomotion` 的 `a911219b1f0d704aa10f1fc915df65c21f612ec1`，保存在 `src/track/vendor/geomotion/`。只调整内部导入为相对路径；源文件与调整后 SHA-256 见该目录的 `source-manifest.json`，来源说明见 `SOURCE.md`。
-- 截至本次集成，上游没有声明许可证。这份快照仅用于用户已授权的本地集成原型，不属于本插件 AGPL 归属声明；正式随产品发布前需明确其许可。2026-10-04 原型验证阶段没有发布软件包或推送源码；本轮按用户要求保存到开发分支，未发布软件包。
+- 2026-10-04 本地原型集成时，上游没有声明许可证；当时仅用于用户已授权的本地验证，未发布软件包。该 GeoMotion 快照不属于本插件 AGPL 归属声明。
+- 2026-10-08 npm 发布时，发布者确认已取得 GeoMotion 分发权限，并明确要求发布。这是发布者的确认记录，未随快照附上书面授权条款。上游公开许可证仍未声明，本次发行继续保留原始版权和这份确认，不为 GeoMotion 新增或推断公开许可证。具体声明见 `src/track/vendor/geomotion/SOURCE.md` 与 `THIRD_PARTY_NOTICES.md`。
 - `bjperson/maplibre-gl-video-export` 的 `cc358e34221ce95c6f7381d8d2a5c9fd0ac0a9ad`（BSD-3-Clause）提供镜头预设与逐帧输出的实现参考。未复制其完整控件、交通路线生成或全局 MapLibre 时钟控制；本插件模板直接生成 GeoMotion 相机关键帧，视频导出消费带地名、字幕及地图来源署名的合成 Canvas。
 - 实际依赖 `immer@10.1.1`（MIT）和 `mediabunny@1.24.2`（MPL-2.0）。编码器直接使用 Mediabunny `CanvasSource`、精确帧时间戳和背压；外部依赖的许可证依其随包文本，宿主 React 继续外置共享。

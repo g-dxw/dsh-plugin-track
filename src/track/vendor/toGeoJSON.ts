@@ -1,6 +1,6 @@
 // @ts-nocheck
 /**
- * Vendored `@tmcw/togeojson` (ISC) — the KML and TCX readers only, taken from
+ * Vendored `@tmcw/togeojson` (BSD-2-Clause) — the KML and TCX readers only, taken from
  * wanderer's `web/src/lib/vendor/toGeoJSON/toGeoJSON.js`.
  *
  * The only change from upstream is the extension: it is JavaScript that was

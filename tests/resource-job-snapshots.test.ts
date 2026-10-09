@@ -138,6 +138,3 @@ describe('immutable AI workspace input snapshots',()=>{
     rejects(()=>readResources(id,env),500)
   })
 })
-
-
-

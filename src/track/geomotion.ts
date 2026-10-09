@@ -2,7 +2,7 @@
 import type { PlacemarkGroup, TrackPlacemark, TrackRecord } from '../protocol.ts'
 import { groupHidden, placemarkListItems } from './placemark-groups.ts'
 import {
-  cameraFromShots, camerasOf, createLayer, keyframe, layersOf, liveCamera, migrate,
+  cameraFromShots, camerasOf, createLayer, keyframe, liveCamera, migrate,
   projectWith, shotsOf, shiftLayer, staticTrack, transact, windowTrack,
   type CameraKeyframe, type CameraNode, type DocNode, type MarkerLayer, type Project, type RouteLayer,
 } from './vendor/geomotion/document/index.ts'
@@ -15,7 +15,6 @@ import type { Scene } from './vendor/geomotion/renderer/index.ts'
 export type GeoMotionProject = Project
 export type GeoKeyframe = CameraKeyframe
 export interface GeoCamera {center: [number, number]; zoom: number; bearing: number; pitch: number}
-export type GeoTemplate = 'intro' | 'orbit' | 'pullback' | 'tour'
 export type { Scene as GeoScene, OverlayFrame as GeoOverlayFrame } from './vendor/geomotion/renderer/index.ts'
 export { syncScene as geoSyncScene, resetSyncCache as geoResetSyncCache } from './vendor/geomotion/map/index.ts'
 export { drawOverlay as geoDrawOverlay, scaleFor as geoScaleFor, imagesReady as geoImagesReady } from './vendor/geomotion/renderer/index.ts'
@@ -154,33 +153,6 @@ export function geoRemoveCameraKey(project: GeoMotionProject, id: string): GeoMo
   const rows = geoCameraKeys(project)
   if (rows.length <= 1 || !rows.some(row => row.id === id)) return project
   return replaceCamera(project, rows.filter(row => row.id !== id))
-}
-export function geoApplyTemplate(project: GeoMotionProject, template: GeoTemplate, targets?: GeoCamera[]): GeoMotionProject {
-  const base: GeoCamera = evaluate(project, 0).camera
-  const duration = project.duration
-  let rows: GeoKeyframe[]
-  if (template === 'orbit') {
-    rows = [0, .25, .5, .75, 1].map((fraction, index) => ({...geoNewKey(duration * fraction, {...base, bearing: base.bearing + index * 90, pitch: Math.max(35, base.pitch)}), easing: 'linear'}))
-  } else if (template === 'pullback') {
-    rows = [geoNewKey(0, base), geoNewKey(duration * .8, {...base, zoom: Math.max(0, base.zoom - 1.8), pitch: Math.max(0, base.pitch - 25)}), geoNewKey(duration, {...base, zoom: Math.max(0, base.zoom - 1.8), pitch: Math.max(0, base.pitch - 25)})]
-  } else if (template === 'tour') {
-    const visits = targets?.length ? targets : layersOf(project).filter((node): node is MarkerLayer => node.type === 'marker' && node.visible).map(marker => ({...base, center: copyCoordinate(marker.coord), zoom: Math.min(17, base.zoom + 1.5)}))
-    if (!visits.length) throw new Error('地点巡游需要至少一个可见地名标注')
-    if (visits.some(camera => !validCamera(camera))) throw new Error('地点巡游镜头参数无效')
-    rows = [geoNewKey(0, base)]
-    const slot = duration * .8 / visits.length
-    visits.forEach((camera, index) => {
-      const start = duration * .1 + index * slot
-      rows.push({...geoNewKey(start, camera), dip: .35})
-      rows.push(geoNewKey(start + slot * .55, camera))
-    })
-    rows.push(geoNewKey(duration, base))
-  } else if (template === 'intro') {
-    const routes = layersOf(project).filter((node): node is RouteLayer => node.type === 'route')
-    const target = routes.length ? overview(routes.flatMap(route => route.coords), project.width, project.height) : base
-    rows = [geoNewKey(0, {...target, zoom: Math.max(0, target.zoom - 1.1), pitch: 30}), geoNewKey(duration * .75, target), geoNewKey(duration, target)]
-  } else throw new Error('未知镜头模板')
-  return replaceCamera(project, rows)
 }
 
 /** Retimes existing authored tracks, rather than regenerating the user's camera and labels. */

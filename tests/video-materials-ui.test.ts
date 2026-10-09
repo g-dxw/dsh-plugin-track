@@ -100,12 +100,33 @@ describe('2D video material preparation', () => {
     expect(writes()).toHaveLength(1); expect(writes()[0][0]).toBe('video-materials'); expect(writes()[0][1]).toMatchObject({id: track.id, expectedRevision: null})
     expect(onCompose).toHaveBeenCalledWith(expect.objectContaining({trackId: track.id, markers: expect.arrayContaining([expect.objectContaining({name: '展示地名'})])}))
   })
+  it('waits for explicit save confirmation before leaving an unsaved material draft', async () => {
+    await render(); await edit('标记名称', '待保存的展示地名'); await click('返回镜头编辑')
+    const dialog = container.querySelector<HTMLElement>('[role=dialog]')!
+    expect(dialog.textContent).toContain('当前工作区有未保存修改，离开前请选择如何处理。'); expect(dialog.textContent).not.toContain('返回轨迹')
+    expect(onBack).not.toHaveBeenCalled()
+    const saving = deferred<{materials: ReturnType<typeof envelope>}>(); vi.mocked(api).mockReturnValueOnce(saving.promise)
+    await click('保存后继续')
+    expect(button('保存中…').disabled).toBe(true); expect(button('返回镜头编辑').disabled).toBe(true); expect(onBack).not.toHaveBeenCalled()
+    const payload = writes().at(-1)![1] as {document: VideoMaterialsDocument}
+    await act(async () => saving.resolve({materials: envelope(payload.document)}))
+    expect(onBack).toHaveBeenCalledTimes(1); expect(payload.document.markers[0].name).toBe('待保存的展示地名')
+    expect(state.points[0].name).toBe('真实观景点')
+  })
   it('retains draft on revision conflict and refuses compose or leave', async () => {
     const conflict = Object.assign(new Error('conflict'), {status: 409})
     vi.mocked(api).mockImplementation(async (action, payload) => {if (payload !== undefined) throw conflict; return action.startsWith('annotations?') ? {annotations: [], saved: false} : {materials: null}})
     await render(); await edit('标记名称', '未保存的地名'); await click('用所选素材编排镜头'); expect(onCompose).not.toHaveBeenCalled(); expect(container.textContent).toContain('当前修改仍保留')
-    await click('返回'); expect(container.querySelector('[role=dialog]')).not.toBeNull(); await click('保存后返回'); expect(onBack).not.toHaveBeenCalled()
-    await click('留在页面'); await click('导出素材 JSON'); expect(exported().markers[0].name).toBe('未保存的地名')
+    await click('返回镜头编辑'); expect(container.querySelector('[role=dialog]')).not.toBeNull(); await click('保存后继续'); expect(onBack).not.toHaveBeenCalled()
+    await click('取消'); await click('导出素材 JSON'); expect(exported().markers[0].name).toBe('未保存的地名')
+  })
+  it('can abandon a new draft without writing or losing the editable source preview', async () => {
+    await render(); await edit('标记名称', '准备放弃的地名'); await click('返回镜头编辑')
+    expect(onBack).not.toHaveBeenCalled(); await click('取消'); expect(container.querySelector<HTMLInputElement>('[aria-label="标记名称"]')!.value).toBe('准备放弃的地名')
+    await click('返回镜头编辑'); await click('放弃本次修改')
+    expect(onBack).toHaveBeenCalledTimes(1); expect(writes()).toHaveLength(0)
+    expect(container.querySelector<HTMLInputElement>('[aria-label="标记名称"]')!.value).toBe('真实观景点'); expect(button('用所选素材编排镜头').disabled).toBe(false)
+    expect(state.points[0].name).toBe('真实观景点')
   })
   it('rebuilds changed sources explicitly and undo restores the previous fingerprint and edits', async () => {
     await render(); await edit('标记名称', '原素材编辑'); await click('导出素材 JSON'); const previous = exported()
