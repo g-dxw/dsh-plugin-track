@@ -14,8 +14,9 @@ import { TRACK_COLOR } from '../trail-layer.ts'
 import { routePaths, sceneHeight, triangleElevation, terrainModel, terrainSides, terrainTop, type GeometryData, type TerrainModel, type SandboxPosition } from './geometry.ts'
 import { terrainPosition } from './coordinates.ts'
 import type { SandboxCameraState, SandboxPlacemark, TerrainGrid } from './types.ts'
-import { SandboxPlacemarkLayer, type SandboxPlacemarkOptions } from './placemarks.ts'
+import { SANDBOX_ENDPOINT_RADIUS, SandboxPlacemarkLayer, type SandboxPlacemarkOptions } from './placemarks.ts'
 import { createSandboxEnvironment, type SandboxEnvironment } from './environment.ts'
+import { SandboxTerrainOcclusion } from './occlusion.ts'
 
 interface Disposable { dispose(): void }
 interface RouteLine {
@@ -46,6 +47,7 @@ export class SandboxRenderer {
   private terrain: TerrainGrid | null = null
   private model: TerrainModel | null = null
   private placemarks: SandboxPlacemarkLayer | null = null
+  private occlusion: SandboxTerrainOcclusion | null = null
   private disposed = false
   private assets = new Set<Disposable>()
   private lineMaterial: LineMaterial | null = null
@@ -65,6 +67,9 @@ export class SandboxRenderer {
   private routeLines: RouteLine[] = []
   private routeDistance = 0
   private routeProgress = 1
+  private endpointMarkers: THREE.Mesh<THREE.SphereGeometry, THREE.MeshBasicMaterial>[] = []
+  private markerView = new THREE.Vector3()
+  private markerProjection = new THREE.Vector3()
 
   private contextLost = () => {
     if (this.disposed) return
@@ -77,8 +82,8 @@ export class SandboxRenderer {
       this.frame = 0
       if (this.disposed || !this.renderer || !this.scene || !this.camera) return
       const changing = this.interactionEnabled && this.controls?.update()
-      this.renderer.render(this.scene, this.camera)
       this.projectPlacemarks()
+      this.renderer.render(this.scene, this.camera)
       this.notifyFrameRendered()
       if (changing) this.requestRender()
     })
@@ -116,6 +121,7 @@ export class SandboxRenderer {
       this.quality = options.quality ?? 'standard'
       const model = this.model = terrainModel(terrain, options.exaggeration)
       this.terrain = terrain
+      this.occlusion = new SandboxTerrainOcclusion(terrain, model)
       const scene = this.scene = new THREE.Scene()
       const topGeometry = this.geometry(terrainTop(terrain, model))
       let texture: THREE.CanvasTexture | null = null
@@ -161,14 +167,18 @@ export class SandboxRenderer {
         scene.add(line)
       }
 
-      const radius = Math.max(1, Math.max(terrain.widthMeters, terrain.depthMeters) * 0.006)
-      const markerGeometry = this.own(new THREE.SphereGeometry(radius, 16, 12))
+      const markerGeometry = this.own(new THREE.SphereGeometry(1, 16, 12))
       const lastPath = paths[paths.length - 1]
-      for (const [point, color] of [[paths[0]?.[0], '#4ade80'], [lastPath?.[lastPath.length - 1], '#f87171']] as const) {
+      for (const [point, color, name] of [[paths[0]?.[0], '#4ade80', 'sandbox-route-start'],
+        [lastPath?.[lastPath.length - 1], '#f87171', 'sandbox-route-end']] as const) {
         if (!point) continue
-        const markerMaterial = this.own(new THREE.MeshStandardMaterial({color, roughness: 0.55}))
+        const markerMaterial = this.own(new THREE.MeshBasicMaterial({
+          color, toneMapped: false, depthTest: true, depthWrite: false,
+        }))
         const marker = new THREE.Mesh(markerGeometry, markerMaterial)
-        marker.position.set(point.x, point.y + radius, point.z)
+        marker.name = name; marker.renderOrder = 11
+        marker.position.set(point.x, point.y, point.z)
+        this.endpointMarkers.push(marker)
         scene.add(marker)
       }
 
@@ -217,16 +227,33 @@ export class SandboxRenderer {
     this.requestRender()
   }
 
-  /** Marker toggles and selection never rebuild terrain or allocate WebGL resources. */
+  /** Marker changes reuse terrain and camera; the label layer owns its visual resources. */
   updatePlacemarks(placemarks: readonly SandboxPlacemark[], options: SandboxPlacemarkOptions = {}): void {
     if (this.disposed || !this.scene || !this.terrain || !this.model || !this.camera) return
-    this.placemarks ??= new SandboxPlacemarkLayer(this.container, this.terrain, this.model)
+    this.placemarks ??= new SandboxPlacemarkLayer(this.container, this.terrain, this.model, this.scene,
+      this.endpointMarkers.map(marker => marker.position), this.occlusion ?? undefined)
     this.placemarks.update(placemarks, options)
     this.projectPlacemarks()
+    this.requestRender()
   }
 
   private projectPlacemarks(): void {
-    if (this.camera) this.placemarks?.project(this.camera, this.container.clientWidth, this.container.clientHeight)
+    const camera = this.camera
+    if (!camera) return
+    const width = this.container.clientWidth, height = this.container.clientHeight
+    camera.updateMatrixWorld()
+    this.placemarks?.project(camera, width, height)
+    const radiusPerDistance = height > 0
+      ? 2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) / height * SANDBOX_ENDPOINT_RADIUS : 0
+    for (const marker of this.endpointMarkers) {
+      const distance = -this.markerView.copy(marker.position).applyMatrix4(camera.matrixWorldInverse).z
+      const {x, y, z} = this.markerProjection.copy(marker.position).project(camera)
+      marker.visible = width > 0 && height > 0 && distance >= camera.near && distance <= camera.far
+        && Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(z)
+        && Math.abs(x) <= 1 && Math.abs(y) <= 1 && z >= -1 && z <= 1
+        && !this.placemarks?.hasVisibleAnchorAt(marker.position)
+      if (marker.visible) marker.scale.setScalar(distance * radiusPerDistance)
+    }
   }
 
   /** Live colors share the existing cut-face material and remain part of canvas captures. */
@@ -449,8 +476,8 @@ export class SandboxRenderer {
   renderFrame(): void {
     if (!this.renderer || !this.scene || !this.camera || this.disposed) return
     if (this.interactionEnabled) this.controls?.update()
-    this.renderer.render(this.scene, this.camera)
     this.projectPlacemarks()
+    this.renderer.render(this.scene, this.camera)
     this.notifyFrameRendered()
   }
 
@@ -539,6 +566,7 @@ export class SandboxRenderer {
     this.placemarks = null
     this.terrain = null
     this.model = null
+    this.occlusion = null
     this.releaseEnvironment()
     for (const resource of this.assets) resource.dispose()
     this.assets.clear()
@@ -548,6 +576,7 @@ export class SandboxRenderer {
     this.fit = null
     this.lineMaterial = null
     this.routeLines = []
+    this.endpointMarkers = []
     this.routeDistance = 0
     this.routeProgress = 1
     this.sideMaterial = null

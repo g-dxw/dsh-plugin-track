@@ -4,13 +4,13 @@ import {createRoot,type Root} from 'react-dom/client'
 import {beforeEach,afterEach,describe,it,expect,vi} from 'vitest'
 import {placemarkPhotoThumbnailUrl} from '../src/track/placemark-photo-assets.ts'
 import {AnnotationCanvas,type AnnotationCanvasHandle} from '../src/client/AnnotationCanvas.tsx'
-import {artTextPosition,diagramCoordinates,trackSvg,validateAnnotations,type ArtLayout,type TrackAnnotation} from '../src/track/annotations.ts'
+import {annotationAnchorPosition,artTextPosition,diagramCoordinates,trackSvg,validateAnnotations,type ArtCanvasSize,type ArtLayout,type TrackAnnotation} from '../src/track/annotations.ts'
 import type {TrackPoint} from '../src/protocol.ts'
 const points:TrackPoint[]=[[119,30,null,null],[119.01,30.01,null,null],[119.02,30,null,null]]
 const image='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2fc8AAAAASUVORK5CYII='
 let root:Root,node:HTMLDivElement,current:TrackAnnotation[],currentLayout:ArtLayout
-type Options = Partial<Pick<ComponentProps<typeof AnnotationCanvas>,'trackId'|'onSelect'|'onPan'|'panning'|'managedPan'|'disabled'|'adding'|'onAdd'|'layout'|'onLayoutChange'|'onTextSelect'|'route'>>
-function Canvas({initial,layout:initialLayout={},onLayoutChange,...options}:{initial:TrackAnnotation[]}&Options){const[labels,setLabels]=useState(initial),[layout,setLayout]=useState(initialLayout);current=labels;currentLayout=layout;return createElement(AnnotationCanvas,{svg:trackSvg(points,{name:'路线',annotations:labels,layout,route:options.route,interactive:true}),points,annotations:labels,layout,onLayoutChange:next=>{setLayout(next);onLayoutChange?.(next)},onChange:setLabels,...options})}
+type Options = Partial<Pick<ComponentProps<typeof AnnotationCanvas>,'trackId'|'onSelect'|'onPan'|'panning'|'managedPan'|'disabled'|'adding'|'onAdd'|'layout'|'onLayoutChange'|'onTextSelect'|'route'>>&{canvas?:ArtCanvasSize}
+function Canvas({initial,layout:initialLayout={},onLayoutChange,canvas,...options}:{initial:TrackAnnotation[]}&Options){const[labels,setLabels]=useState(initial),[layout,setLayout]=useState(initialLayout);current=labels;currentLayout=layout;return createElement(AnnotationCanvas,{svg:trackSvg(points,{name:'路线',annotations:labels,layout,route:options.route,canvas,interactive:true}),points,annotations:labels,layout,onLayoutChange:next=>{setLayout(next);onLayoutChange?.(next)},onChange:setLabels,...options})}
 beforeEach(()=>{vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT',true);node=document.createElement('div');document.body.append(node);root=createRoot(node);vi.spyOn(SVGElement.prototype,'getBoundingClientRect').mockImplementation(()=>({left:0,top:0,width:1200,height:900,right:1200,bottom:900,x:0,y:0,toJSON(){}}))})
 afterEach(async()=>{await act(async()=>root.unmount());node.remove();vi.restoreAllMocks();vi.unstubAllGlobals()})
 async function render(initial:TrackAnnotation[],options:Options={}){await act(async()=>root.render(createElement(Canvas,{initial,...options})));const svg=node.querySelector('svg')!;vi.mocked(svg.getBoundingClientRect).mockReturnValue({left:0,top:0,width:1200,height:Number(svg.getAttribute('height')),right:1200,bottom:900,x:0,y:0,toJSON(){}})}
@@ -265,4 +265,119 @@ it('paints a cached small source photo while drag updates retain the embedded by
  await event(node.firstElementChild!,'pointermove',160,740);await event(node.firstElementChild!,'pointerup',160,740)
  expect(current[0].photo).toEqual({dataUrl:image,sourceUrl:source,x:160,y:740})
  expect(node.querySelector('image')?.getAttribute('href')).toBe(placemarkPhotoThumbnailUrl('track-1',source))
+})
+
+
+describe('source anchor leaders during layout gestures',()=>{
+ const marker:TrackAnnotation={id:'source-marker',sourceId:'kml-1',sourceCoordinates:[119.005,30.005],visible:true,pointIndex:0,label:'源点位',color:'#7c3aed',position:{x:400,y:300},photo:{dataUrl:image,x:60,y:690}}
+ it('moves only the marker layout and both layout leaders while preserving its exact source anchor under a route transform',async()=>{
+  const route={x:20,y:-10,scale:1.5},before=structuredClone({marker,points}),onSelect=vi.fn()
+  await render([marker],{route,onSelect})
+  const canvas=node.firstElementChild!,dot=node.querySelector('[data-annotation-anchor-id]')!,originalDot=dot.outerHTML,leader=node.querySelector('[data-anchor-connector-id]')!,photoLine=node.querySelector('[data-connector-id]')!,originalPhotoLine=photoLine.getAttribute('d'),[ax,ay]=annotationAnchorPosition(marker,points)
+  await event(node.querySelector('[data-annotation-id]')!,'pointerdown',630,435)
+  await event(canvas,'pointermove',690,465)
+  expect(leader.getAttribute('d')).toBe(`M${ax.toFixed(2)},${ay.toFixed(2)} L440.00,320.00`)
+  expect(dot.outerHTML).toBe(originalDot)
+  expect(photoLine.getAttribute('d')).not.toBe(originalPhotoLine)
+  await event(canvas,'pointerup',690,465)
+  expect(current[0].position).toEqual({x:440,y:320})
+  expect(current[0].sourceCoordinates).toEqual(marker.sourceCoordinates)
+  expect(current[0].pointIndex).toBe(0)
+  expect(current[0].photo).toEqual(marker.photo)
+  expect(node.querySelector('[data-annotation-anchor-id]')!.outerHTML).toBe(originalDot)
+  expect(node.querySelector('[data-anchor-connector-id]')?.getAttribute('d')).toBe(`M${ax.toFixed(2)},${ay.toFixed(2)} L440.00,320.00`)
+  expect(node.querySelector('[data-route-annotations]')?.getAttribute('transform')).toBe('translate(30 -15) scale(1.5)')
+  expect(onSelect).toHaveBeenLastCalledWith(marker.id,{openEditor:false})
+  expect({marker,points}).toEqual(before)
+ })
+
+ it.each(['pointercancel','lostpointercapture','blur','Escape'])('restores the source leader and photo connector on %s without changing layout or coordinates',async stop=>{
+  const onSelect=vi.fn();await render([marker],{onSelect})
+  const canvas=node.firstElementChild!,element=node.querySelector('[data-annotation-id]')!,dot=node.querySelector('[data-annotation-anchor-id]')!,originalDot=dot.outerHTML,leader=node.querySelector('[data-anchor-connector-id]')!,originalLeader=leader.getAttribute('d'),photoLine=node.querySelector('[data-connector-id]')!,originalPhotoLine=photoLine.getAttribute('d'),before=structuredClone(current)
+  await event(element,'pointerdown',400,300,7);await event(canvas,'pointermove',460,340,7)
+  expect(element.getAttribute('transform')).toBe('translate(60 40)')
+  expect(leader.getAttribute('d')).not.toBe(originalLeader)
+  expect(photoLine.getAttribute('d')).not.toBe(originalPhotoLine)
+  expect(dot.outerHTML).toBe(originalDot)
+  if(stop==='blur')await act(async()=>window.dispatchEvent(new Event('blur')))
+  else if(stop==='Escape')await act(async()=>element.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true})))
+  else await event(canvas,stop,460,340,7)
+  expect(element.getAttribute('transform')).toBeNull()
+  expect(leader.getAttribute('d')).toBe(originalLeader)
+  expect(photoLine.getAttribute('d')).toBe(originalPhotoLine)
+  expect(dot.outerHTML).toBe(originalDot)
+  await event(canvas,'pointerup',460,340,7)
+  expect(current).toEqual(before)
+  expect(onSelect).not.toHaveBeenCalled()
+ })
+
+ it('updates keyboard marker layout leaders while photo dragging leaves the geographic leader unchanged',async()=>{
+  await render([marker])
+  const dot=node.querySelector('[data-annotation-anchor-id]')!.outerHTML,[ax,ay]=annotationAnchorPosition(marker,points)
+  for(let count=0;count<2;count++)await act(async()=>node.querySelector('[data-annotation-id]')!.dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowRight',bubbles:true})))
+  expect(current[0].position).toEqual({x:406,y:300})
+  expect(current[0].sourceCoordinates).toEqual(marker.sourceCoordinates)
+  expect(node.querySelector('[data-annotation-anchor-id]')!.outerHTML).toBe(dot)
+  const leader=node.querySelector('[data-anchor-connector-id]')!,original=leader.getAttribute('d')
+  expect(original).toBe(`M${ax.toFixed(2)},${ay.toFixed(2)} L406.00,300.00`)
+  expect(document.activeElement?.getAttribute('data-annotation-id')).toBe(marker.id)
+  await event(node.querySelector('[data-photo-id]')!,'pointerdown',60,690)
+  await event(node.firstElementChild!,'pointermove',80,710)
+  expect(leader.getAttribute('d')).toBe(original)
+  await event(node.firstElementChild!,'pointerup',80,710)
+  expect(current[0].photo).toEqual({...marker.photo,x:80,y:710})
+  expect(node.querySelector('[data-anchor-connector-id]')?.getAttribute('d')).toBe(original)
+  expect(node.querySelector('[data-annotation-anchor-id]')!.outerHTML).toBe(dot)
+ })
+
+ it('restores a marker leader when a live route camera change cancels its local drag',async()=>{
+  const ref=createRef<AnnotationCanvasHandle>(),onChange=vi.fn(),onSelect=vi.fn()
+  await act(async()=>root.render(createElement(AnnotationCanvas,{ref,svg:trackSvg(points,{name:'源位置',annotations:[marker],layer:'overlay',interactive:true}),points,annotations:[marker],onChange,onSelect})))
+  const svg=node.querySelector('svg')!,height=Number(svg.getAttribute('height'))
+  vi.mocked(svg.getBoundingClientRect).mockReturnValue({left:0,top:0,width:1200,height,right:1200,bottom:height,x:0,y:0,toJSON(){}})
+  const canvas=node.firstElementChild!,element=node.querySelector('[data-annotation-id]')!,dot=node.querySelector('[data-annotation-anchor-id]')!,originalDot=dot.outerHTML,leader=node.querySelector('[data-anchor-connector-id]')!,originalLeader=leader.getAttribute('d')
+  await event(element,'pointerdown',400,300);await event(canvas,'pointermove',460,340)
+  expect(leader.getAttribute('d')).not.toBe(originalLeader)
+  await act(async()=>ref.current!.setRouteView({x:40,y:-20,scale:1.5}))
+  expect(element.getAttribute('transform')).toBeNull()
+  expect(leader.getAttribute('d')).toBe(originalLeader)
+  expect(dot.outerHTML).toBe(originalDot)
+  expect(node.querySelector('[data-route-annotations]')?.getAttribute('transform')).toBe('translate(60 -30) scale(1.5)')
+  await event(canvas,'pointerup',460,340)
+  expect(onChange).not.toHaveBeenCalled()
+  expect(onSelect).not.toHaveBeenCalled()
+ })
+})
+
+
+describe('pixel export dimensions independent of logical canvas interactions',()=>{
+ it('uses the 1200 by 675 viewBox for marker dragging and double-click additions on a 1600 by 900 SVG',async()=>{
+  const marker:TrackAnnotation={id:'sized-marker',visible:true,pointIndex:0,label:'宽画布',color:'#7c3aed',position:{x:300,y:225}},onAdd=vi.fn()
+  await render([marker],{canvas:{width:1600,height:900},onAdd})
+  const svg=node.querySelector('svg')!,canvas=node.firstElementChild!
+  expect(svg.getAttribute('width')).toBe('1600');expect(svg.getAttribute('height')).toBe('900');expect(svg.getAttribute('viewBox')).toBe('0 0 1200 675')
+  vi.mocked(svg.getBoundingClientRect).mockReturnValue({left:10,top:20,width:1600,height:900,right:1610,bottom:920,x:10,y:20,toJSON(){}})
+  // Screen (400,300) represents the saved artwork position (300,225).
+  await event(node.querySelector('[data-annotation-id]')!,'pointerdown',410,320)
+  await event(canvas,'pointermove',570,400);await event(canvas,'pointerup',570,400)
+  expect(current[0].position).toEqual({x:420,y:285});expect(current[0].pointIndex).toBe(0)
+  await act(async()=>canvas.dispatchEvent(new MouseEvent('dblclick',{bubbles:true,clientX:1210,clientY:620})))
+  expect(onAdd).toHaveBeenLastCalledWith({x:900,y:450})
+  expect(current[0].position).toEqual({x:420,y:285})
+ })
+
+ it('combines a small displayed viewport with route scaling without changing route-local marker semantics',async()=>{
+  const marker:TrackAnnotation={id:'scaled-marker',visible:true,pointIndex:1,label:'缩小画布',color:'#7c3aed',position:{x:400,y:310}},route={x:20,y:-10,scale:.5}
+  await render([marker],{canvas:{width:1200,height:900},route})
+  const svg=node.querySelector('svg')!,canvas=node.firstElementChild!
+  vi.mocked(svg.getBoundingClientRect).mockReturnValue({left:40,top:60,width:400,height:300,right:440,bottom:360,x:40,y:60,toJSON(){}})
+  expect(node.querySelector('[data-route-annotations]')?.getAttribute('transform')).toBe('translate(10 -5) scale(0.5)')
+  // The route-local marker (400,310) is artwork (210,150), then screen (110,110).
+  await event(node.querySelector('[data-annotation-id]')!,'pointerdown',110,110)
+  await event(canvas,'pointermove',140,125);await event(canvas,'pointerup',140,125)
+  expect(current[0].position).toEqual({x:580,y:400})
+  expect(current[0].pointIndex).toBe(1)
+  expect(node.querySelector('[data-route-annotations]')?.getAttribute('transform')).toBe('translate(10 -5) scale(0.5)')
+  expect(node.querySelector('[data-annotation-id] circle')?.getAttribute('cx')).toBe('580.00')
+ })
 })

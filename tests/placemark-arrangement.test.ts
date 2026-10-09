@@ -3,7 +3,7 @@ import { act, createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 vi.mock('../src/client/placemark-photo-cache.ts',()=>({preparePlacemarkPhotoCache:vi.fn(async()=>{})}))
-import { useTrackPlacemarks } from '../src/client/useTrackPlacemarks.ts'
+import { useTrackPlacemarks, loadTrackPlacemarkState } from '../src/client/useTrackPlacemarks.ts'
 import { api } from '../src/client/util.ts'
 import type { TrackRecord, TrackPlacemark, PlacemarkGroup } from '../src/protocol.ts'
 import { createPlacemarkHistory, type PlacemarkHistory } from '../src/client/placemark-history.ts'
@@ -304,5 +304,22 @@ describe('point lifetimes, conflicts and route context',()=>{
   it('fixes estimation references through hide, delete and movement without recursion',async()=>{
     const untimed={...track,coordinates:[[120,30,100,null],[120.01,30,200,null]] as TrackRecord['coordinates']};await render(untimed);const baseline=structuredClone(result.routeContext)
     await act(async()=>expect(await result.updatePoint('start',{hidden:true})).toBe(true));await act(async()=>expect(await result.deletePoints(['end'])).toBe(true));await act(async()=>expect(await result.movePoint('start',[120.002,30])).toBe(true));await act(async()=>expect(await result.createPoint(created(.75))).toBe(true));expect(result.routeContext).toEqual(baseline);expect(point(newId)).toMatchObject({time:300,timeSource:'estimated'})
+  })
+})
+
+
+describe('effective SVG placemark source reads',()=>{
+  it('reads persisted edits, deletion, flat order and grouping instead of raw import data',async()=>{
+    persistentState({deletedIds:['end'],edits:[{id:'start',name:'已修改起点',hidden:true}],order:['photo','start'],groups:[group]})
+    const source=await loadTrackPlacemarkState(track)
+    expect(source.points.map(point=>point.id)).toEqual(['photo','start'])
+    expect(source.points[1]).toMatchObject({name:'已修改起点',hidden:true})
+    expect(source.groups).toEqual([group]);expect(track.placemarks![0].name).toBe('起点')
+  })
+  it('fails closed when saved source visibility cannot be read or validated',async()=>{
+    vi.mocked(api).mockRejectedValueOnce(new Error('状态读取失败'))
+    await expect(loadTrackPlacemarkState(track)).rejects.toThrow('状态读取失败')
+    vi.mocked(api).mockResolvedValueOnce({state:{version:1,revision:0}} as never)
+    await expect(loadTrackPlacemarkState(track)).rejects.toThrow()
   })
 })

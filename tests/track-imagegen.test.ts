@@ -19,7 +19,7 @@ afterEach(() => { vi.unstubAllGlobals() })
 describe('existing imagegen catalog', () => {
   it('maps account default upstream id to the alias and reads only the safe provider view', async () => {
     provider([{alias: '画图模型', id: 'upstream-a'}, {alias: '另一个模型', id: 'upstream-b'}], {defaultModel: 'upstream-b'})
-    expect(await loadImagegenCatalog()).toEqual({
+    expect(await loadImagegenCatalog()).toMatchObject({
       models: [{id: '画图模型', label: '画图模型', channelId: 'cqai'}, {id: '另一个模型', label: '另一个模型', channelId: 'cqai'}],
       defaultModel: '另一个模型', available: true,
     })
@@ -47,7 +47,7 @@ describe('existing imagegen catalog', () => {
 
   it('filters malformed and duplicate aliases and retains a catalog warning', async () => {
     provider([null, {}, {alias: '', id: 'one'}, {alias: 'a'}, {alias: 'a', id: 'one'}, {alias: 'a', id: 'one'}], {warning: '正在使用缓存模型目录'})
-    expect(await loadImagegenCatalog()).toEqual({models: [{id: 'a', label: 'a', channelId: 'cqai'}], defaultModel: 'a', available: true, message: '正在使用缓存模型目录'})
+    expect(await loadImagegenCatalog()).toMatchObject({models: [{id: 'a', label: 'a', channelId: 'cqai'}], defaultModel: 'a', available: true, message: '正在使用缓存模型目录'})
   })
 
   it.each([
@@ -66,7 +66,7 @@ describe('existing imagegen catalog', () => {
 
   it.each([200, 404])('recognizes an HTML fallback at HTTP %s as an unavailable plugin', async status => {
     fetchMock.mockResolvedValueOnce(new Response('<!doctype html><html>DSH</html>', {status, headers: {'content-type': 'text/html'}}))
-    expect(await loadImagegenCatalog()).toEqual({models: [], defaultModel: null, available: false, message: expect.stringContaining('生图插件未启用或不可用')})
+    expect(await loadImagegenCatalog()).toMatchObject({models: [], defaultModel: null, available: false, message: expect.stringContaining('生图插件未启用或不可用')})
   })
 
   it('reports connection and malformed catalog failures without submitting an image request', async () => {
@@ -158,6 +158,7 @@ describe('owned imagegen task lifecycle', () => {
 
   it('ends polling for expired tasks and for completed tasks without a safe image', async () => {
     fetchMock.mockResolvedValueOnce(json({ok: true, tasks: [{id: 'other-task', status: 'running'}]}))
+    fetchMock.mockResolvedValueOnce(json({ok: false, code: 'not-found', message: 'task not found'}))
     expect(await loadTrackArtTask('owned-task')).toMatchObject({status: 'failed', images: [], error: expect.stringContaining('已过期')})
     fetchMock.mockResolvedValueOnce(json({ok: true, tasks: [{id: 'owned-task', status: 'completed', result: {images: [{b64: 'aGVsbG8=', mime: 'image/svg+xml'}, {b64: 'invalid!', mime: 'image/png'}]}}]}))
     expect(await loadTrackArtTask('owned-task')).toMatchObject({status: 'failed', images: [], error: expect.stringContaining('未返回可用图片')})

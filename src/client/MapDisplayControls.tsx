@@ -1,6 +1,7 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import type { TrackPlacemark } from '../protocol.ts'
 import { ALL_PLACEMARK_TYPES, isAllPlacemarkTypes, placemarkTypeOptions, placemarkTypeValues, type PlacemarkTypeFilter } from '../track/placemark-filter.ts'
+import { SANDBOX_LABEL_SIZE_MIN, SANDBOX_LABEL_SIZE_MAX, SANDBOX_LABEL_HEIGHT_MIN, SANDBOX_LABEL_HEIGHT_MAX, PLACEMARK_POINT_SIZE_MIN, PLACEMARK_POINT_SIZE_MAX, PLACEMARK_POINT_RADIUS_MIN, PLACEMARK_POINT_RADIUS_MAX } from '../track/map-settings.ts'
 import { useMapSettings } from './map-settings.tsx'
 
 export interface MapDisplayControlsProps {
@@ -9,14 +10,18 @@ export interface MapDisplayControlsProps {
   onTypeFilter?: (next: PlacemarkTypeFilter) => void
   disabled?: boolean
   sandbox?: boolean
+  terrain?: boolean
 }
 
-export function MapDisplayControls({placemarks, typeFilter, onTypeFilter, disabled = false}: MapDisplayControlsProps) {
+export function MapDisplayControls({placemarks, typeFilter, onTypeFilter, disabled = false, sandbox = false, terrain = false}: MapDisplayControlsProps) {
   const {settings, updateSettings} = useMapSettings()
   const [open, setOpen] = useState(false)
   const tools = useRef<HTMLDivElement>(null)
   const trigger = useRef<HTMLButtonElement>(null)
   const panelId = useId()
+  const modeField = sandbox ? 'sandboxPlacemarkMode' : 'terrainPlacemarkMode'
+  const displayMode = sandbox || terrain ? settings[modeField] : 'point'
+  const showTextControls = displayMode === 'marker' || settings.placemarkPointShowName
   const allTypes = useRef<HTMLInputElement>(null)
   const options = useMemo(() => placemarkTypeOptions(placemarks), [placemarks])
   const categories = options.filter(option => option.value !== ALL_PLACEMARK_TYPES)
@@ -71,6 +76,70 @@ export function MapDisplayControls({placemarks, typeFilter, onTypeFilter, disabl
           <output>{settings.routeColor}</output>
         </div>
       </div>
+      {(sandbox || terrain) && <div className="trk-map-display-field"><label htmlFor={`${panelId}-mode`}>显示模式</label>
+        <select id={`${panelId}-mode`} className="trk-map-display-mode" aria-label="显示模式" aria-describedby={`${panelId}-mode-help`} value={displayMode} disabled={disabled}
+          onChange={event => {
+            const value = event.target.value
+            if (!disabled && (value === 'point' || value === 'marker')) updateSettings({[modeField]: value})
+          }}>
+          <option value="point">点位模式</option><option value="marker">标记模式</option>
+        </select>
+        <small id={`${panelId}-mode-help`} className="trk-map-display-help">点位显示编号色块；标记显示悬浮文字、虚线与小球。</small>
+      </div>}
+      {displayMode === 'point' && <>
+        <div className="trk-map-display-field"><label htmlFor={`${panelId}-point-size`}>点位大小</label>
+          <div className="trk-map-display-label-size"><input id={`${panelId}-point-size`} type="range" aria-label="点位大小"
+            min={PLACEMARK_POINT_SIZE_MIN} max={PLACEMARK_POINT_SIZE_MAX} step={1} value={settings.placemarkPointSize}
+            aria-valuetext={`${settings.placemarkPointSize} px`} disabled={disabled}
+            onChange={event => {if (!disabled) updateSettings({placemarkPointSize: Number(event.target.value)})}}/>
+            <output htmlFor={`${panelId}-point-size`}>{settings.placemarkPointSize} px</output>
+          </div>
+        </div>
+        {([['placemarkPointColor', '点位颜色'], ['placemarkGroupColor', '分组颜色']] as const).map(([field, label]) =>
+          <div key={field} className="trk-map-display-field"><label htmlFor={`${panelId}-${field}`}>{label}</label>
+            <div className="trk-map-display-color"><input id={`${panelId}-${field}`} type="color" aria-label={label} value={settings[field]} disabled={disabled}
+              onChange={event => {if (!disabled) updateSettings({[field]: event.target.value})}}/>
+              <output>{settings[field]}</output>
+            </div>
+          </div>)}
+        <div className="trk-map-display-field"><label htmlFor={`${panelId}-point-radius`}>点位圆角</label>
+          <div className="trk-map-display-label-size"><input id={`${panelId}-point-radius`} type="range" aria-label="点位圆角"
+            min={PLACEMARK_POINT_RADIUS_MIN} max={PLACEMARK_POINT_RADIUS_MAX} step={1} value={settings.placemarkPointRadius}
+            aria-valuetext={`${settings.placemarkPointRadius}%`} aria-describedby={`${panelId}-point-radius-help`} disabled={disabled}
+            onChange={event => {if (!disabled) updateSettings({placemarkPointRadius: Number(event.target.value)})}}/>
+            <output htmlFor={`${panelId}-point-radius`}>{settings.placemarkPointRadius}%</output>
+          </div>
+          <small id={`${panelId}-point-radius-help`} className="trk-map-display-help">0% 为方形，50% 为圆形。</small>
+        </div>
+        <label className="trk-map-display-check"><input type="checkbox" aria-label="显示组内点位数量" checked={settings.placemarkPointShowCount} disabled={disabled}
+          onChange={event => {if (!disabled) updateSettings({placemarkPointShowCount: event.target.checked})}}/>显示组内点位数量</label>
+        <label className="trk-map-display-check"><input type="checkbox" aria-label="显示名称" checked={settings.placemarkPointShowName} disabled={disabled}
+          onChange={event => {if (!disabled) updateSettings({placemarkPointShowName: event.target.checked})}}/>显示名称</label>
+      </>}
+      {(showTextControls ? displayMode === 'marker' ? [['sandboxLabelColor', '文字颜色'], ['sandboxConnectorColor', '连线颜色']] as const : [['sandboxLabelColor', '文字颜色']] as const : []).map(([field, label]) =>
+        <div key={field} className="trk-map-display-field"><label htmlFor={`${panelId}-${field}`}>{label}</label>
+          <div className="trk-map-display-color"><input id={`${panelId}-${field}`} type="color" aria-label={label} value={settings[field]} disabled={disabled}
+            onChange={event => {if (!disabled) updateSettings({[field]: event.target.value})}}/>
+            <output>{settings[field]}</output>
+          </div>
+        </div>)}
+      {showTextControls && <div className="trk-map-display-field"><label htmlFor={`${panelId}-label-size`}>文字大小</label>
+        <div className="trk-map-display-label-size"><input id={`${panelId}-label-size`} type="range" aria-label="文字大小"
+          min={SANDBOX_LABEL_SIZE_MIN} max={SANDBOX_LABEL_SIZE_MAX} step={1} value={settings.sandboxLabelSize}
+          aria-valuetext={`${settings.sandboxLabelSize} px`} disabled={disabled}
+          onChange={event => {if (!disabled) updateSettings({sandboxLabelSize: Number(event.target.value)})}}/>
+          <output htmlFor={`${panelId}-label-size`}>{settings.sandboxLabelSize} px</output>
+        </div>
+      </div>}
+      {displayMode === 'marker' && <div className="trk-map-display-field"><label htmlFor={`${panelId}-label-height`}>文字高度</label>
+        <div className="trk-map-display-label-size"><input id={`${panelId}-label-height`} type="range" aria-label="文字高度"
+          min={SANDBOX_LABEL_HEIGHT_MIN} max={SANDBOX_LABEL_HEIGHT_MAX} step={.1} value={settings.sandboxLabelHeight}
+          aria-valuetext={`默认高度的 ${Math.round(settings.sandboxLabelHeight * 100)}%`} aria-describedby={`${panelId}-label-height-help`} disabled={disabled}
+          onChange={event => {if (!disabled) updateSettings({sandboxLabelHeight: Number(event.target.value)})}}/>
+          <output htmlFor={`${panelId}-label-height`}>{Math.round(settings.sandboxLabelHeight * 100)}%</output>
+        </div>
+        <small id={`${panelId}-label-height-help`} className="trk-map-display-help">调整文字与点位的距离，100% 为默认高度。</small>
+      </div>}
       <fieldset className="trk-map-display-types"><legend>标记点类型</legend>
         {options.map(option => <label key={option.value} className="trk-map-display-type-option">
           <input type="checkbox" aria-label={option.label} data-placemark-type={option.value}
@@ -91,8 +160,11 @@ const CSS = `
 .trk-map-display{display:contents}.trk-map-dock .trk-map-display-trigger{width:44px;height:44px;min-height:44px;padding:8px;border-top:1px solid var(--trk-border);border-top-left-radius:0;border-top-right-radius:0}.trk-map-display-trigger svg{width:22px;height:22px}.trk-map-display-trigger:focus-visible{outline:2px solid var(--trk-focus);outline-offset:2px}
 .trk-map-display-panel{position:absolute;right:54px;top:0;width:min(280px,calc(100% - 54px));max-width:calc(100% - 54px);max-height:100%;overflow:auto;box-sizing:border-box;padding:12px;pointer-events:auto;z-index:6;background:var(--trk-overlay);color:var(--trk-overlay-text);border:1px solid var(--trk-border);border-radius:var(--trk-radius-md);box-shadow:0 6px 24px var(--trk-shadow)}
 .trk-map-display-heading{display:flex;align-items:center;justify-content:space-between;gap:8px}.trk-map-display-heading strong{font-size:14px}.trk-map-display .trk-map-display-panel button{display:inline-flex;align-items:center;justify-content:center;width:auto;height:auto;min-width:44px;min-height:44px;padding:8px 12px;border:1px solid var(--trk-border);border-radius:var(--trk-radius-sm);background:var(--trk-hover);color:var(--trk-overlay-text);font:inherit;cursor:pointer}
-.trk-map-display-field{display:block;margin:12px 0;font-size:14px}.trk-map-display-field>span,.trk-map-display-field>label{display:block;margin-bottom:6px}.trk-map-display-color{display:flex;align-items:center;gap:10px}.trk-map-display-color input{width:44px;height:44px;min-height:44px;box-sizing:border-box;padding:3px;border:1px solid var(--trk-border);border-radius:var(--trk-radius-sm);background:var(--trk-hover);cursor:pointer}.trk-map-display-color output{font:13px/1.5 ui-monospace,monospace;overflow-wrap:anywhere}.trk-map-display-types{margin:12px 0;padding:0;border:0;min-width:0;max-height:180px;overflow:auto;font-size:14px}.trk-map-display-types legend{padding:0 0 6px}.trk-map-display-type-option{display:flex;align-items:center;gap:8px;min-height:44px;padding:2px 0;box-sizing:border-box;cursor:pointer}.trk-map-display-type-option input{width:18px;height:18px;margin:0;flex-shrink:0;accent-color:var(--trk-accent)}.trk-map-display-type-option span{overflow-wrap:anywhere}.trk-map-display-type-option:has(input:disabled){cursor:default}.trk-map-display-check{display:flex;align-items:center;gap:8px;min-height:44px;font-size:14px;cursor:pointer}.trk-map-display-check input{width:18px;height:18px;margin:0;accent-color:var(--trk-accent)}
-.trk-map-display-panel input:focus-visible,.trk-map-display-panel button:focus-visible{outline:2px solid var(--trk-focus);outline-offset:2px}.trk-map-display-panel input:disabled{opacity:.5;cursor:default}
+.trk-map-display-field{display:block;margin:12px 0;font-size:14px}.trk-map-display-field>span,.trk-map-display-field>label{display:block;margin-bottom:6px}.trk-map-display-color{display:flex;align-items:center;gap:10px}.trk-map-display-color input{width:44px;height:44px;min-height:44px;box-sizing:border-box;padding:3px;border:1px solid var(--trk-border);border-radius:var(--trk-radius-sm);background:var(--trk-hover);cursor:pointer}.trk-map-display-color output{font:13px/1.5 ui-monospace,monospace;overflow-wrap:anywhere}.trk-map-display-types{margin:12px 0;padding:0;border:0;min-width:0;max-height:180px;overflow:auto;font-size:14px}.trk-map-display-types legend{padding:0 0 6px}.trk-map-display-type-option{display:flex;align-items:center;gap:8px;min-height:44px;padding:2px 0;box-sizing:border-box;cursor:pointer}.trk-map-display-type-option input{width:18px;height:18px;margin:0;flex-shrink:0;accent-color:var(--trk-accent)}.trk-map-display-type-option span{overflow-wrap:anywhere}.trk-map-display-type-option:has(input:disabled){cursor:default}.trk-map-display-check{display:flex;align-items:center;gap:8px;min-height:44px;font-size:14px;cursor:pointer}.trk-map-display-check:has(input:disabled){cursor:default}.trk-map-display-check input{width:18px;height:18px;margin:0;accent-color:var(--trk-accent)}
+.trk-map-display-label-size{display:flex;align-items:center;gap:10px}.trk-map-display-label-size input{width:100%;min-width:0;min-height:44px;margin:0;accent-color:var(--trk-accent);cursor:pointer}.trk-map-display-label-size output{flex-shrink:0;white-space:nowrap;font:13px/1.5 ui-monospace,monospace}
+.trk-map-display-mode{width:100%;min-width:0;min-height:44px;box-sizing:border-box;padding:8px;border:1px solid var(--trk-border);border-radius:var(--trk-radius-sm);background:var(--trk-hover);color:var(--trk-overlay-text);font:inherit}
+.trk-map-display-help{display:block;font-size:13px;line-height:1.5}
+.trk-map-display-panel input:focus-visible,.trk-map-display-panel select:focus-visible,.trk-map-display-panel button:focus-visible{outline:2px solid var(--trk-focus);outline-offset:2px}.trk-map-display-panel input:disabled,.trk-map-display-panel select:disabled{opacity:.5;cursor:default}
 @container(max-width:500px){.trk-map-display-panel{top:calc(var(--trk-map-toolbar-bottom,72px) - 10px);max-height:calc(100% - var(--trk-map-toolbar-bottom,72px) + 10px)}}
 @media(forced-colors:active){.trk-map-display-panel{background:Canvas;color:CanvasText;border-color:ButtonText}}
 `

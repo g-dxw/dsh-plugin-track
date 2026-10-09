@@ -323,7 +323,7 @@ export function TrackEditor(props: TrackEditorProps) {
   return <section ref={editor} className="trk-editor" aria-label="轨迹编辑器">
     <style>{EDITOR_CSS}</style>
     <header className="trk-editor-head">
-      <div><h2>{props.initial ? '编辑轨迹' : '新建轨迹'}</h2><p>{mode === 'points' ? '调整标注点顺序、照片关联与位置。修改自动保存到当前轨迹。' : mode === 'art' ? '在 SVG 画布上编辑标注、照片与排版，保存后可继续编辑。' : '手动修线、拆分和合并。保存为新的 GPX 副本，原轨迹保留。'}</p></div>
+      <div><h2>{props.initial ? '编辑轨迹' : '新建轨迹'}</h2><p>{mode === 'points' ? '调整标注点顺序、照片关联与位置。修改自动保存到当前轨迹。' : mode === 'art' ? '点位信息在「标注点编辑」中修改；SVG 用于调整样式、排版位置和图片布局。' : '手动修线、拆分和合并。保存为新的 GPX 副本，原轨迹保留。'}</p></div>
       <div className="trk-editor-actions">
         {mode === 'line' && <><button type="button" disabled={busy || !history.past.length} aria-keyshortcuts="Control+z Meta+z" title="撤销（Ctrl+Z）" onClick={undo}>撤销</button>
         <button type="button" disabled={busy || !history.future.length} aria-keyshortcuts="Control+Shift+z Meta+Shift+z Control+y" title="重做（Ctrl+Shift+Z / Ctrl+Y）" onClick={redo}>重做</button></>}

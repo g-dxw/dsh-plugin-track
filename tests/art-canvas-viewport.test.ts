@@ -122,7 +122,9 @@ describe('Panzoom transforms the route object inside a fixed artwork',()=>{
     const count=onViewCommit.mock.calls.length;await key(node.querySelector('[data-marker]')!,'ArrowRight');expect(onViewCommit).toHaveBeenCalledTimes(count)
     await act(async()=>handle.current!.zoom(9));await painted();expect(view().scale).toBe(4)
     const atMax=onViewCommit.mock.calls.length;await act(async()=>handle.current!.zoom(9));await painted();expect(onViewCommit).toHaveBeenCalledTimes(atMax)
-    await act(async()=>handle.current!.zoom(.01));await painted();expect(view().scale).toBe(.25)
+    await act(async()=>handle.current!.zoom(.01));await painted();expect(view().scale).toBe(.01)
+    await act(async()=>handle.current!.zoom(.00001));await painted();expect(view().scale).toBe(.001)
+    const atMin=onViewCommit.mock.calls.length;await act(async()=>handle.current!.zoom(.00001));await painted();expect(onViewCommit).toHaveBeenCalledTimes(atMin)
     await act(async()=>handle.current!.reset());await painted();near(view(),{x:0,y:0,scale:1})
   })
   it('preserves placement across children changes and cancels a drag on blur',async()=>{

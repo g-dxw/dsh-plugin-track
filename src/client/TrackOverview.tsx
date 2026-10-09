@@ -21,7 +21,7 @@ import { PlacemarkGroupDrawer } from './PlacemarkGroupDrawer.tsx'
 import { PlacemarkContextMenu } from './PlacemarkContextMenu.tsx'
 import { moveGroupedPlacemark, placemarkOrderScope, shiftGroupedPlacemark } from './group-order.ts'
 
-type PlacemarkViewProps={track:TrackRecord;basemap:BasemapId;onBasemap:(next:BasemapId)=>void}
+type PlacemarkViewProps={track:TrackRecord;basemap:BasemapId;onBasemap:(next:BasemapId)=>void;onPhotoAI?:(sourceUrl:string)=>void;refreshToken?:number}
 
 export function TrackOverview(props:PlacemarkViewProps) {
   return <PlacemarkView {...props} editable={false}/>
@@ -32,8 +32,10 @@ export function TrackPlacemarkEditor(props:PlacemarkViewProps&{onBusyChange?:(bu
   return <PlacemarkView {...props} history={props.history||ownHistory} editable/>
 }
 
-function PlacemarkView({track,basemap,onBasemap,editable,onBusyChange,history}:PlacemarkViewProps&{editable:boolean;onBusyChange?:(busy:boolean)=>void;history?:PlacemarkHistory}) {
+function PlacemarkView({track,basemap,onBasemap,editable,onBusyChange,history,onPhotoAI,refreshToken}:PlacemarkViewProps&{editable:boolean;onBusyChange?:(busy:boolean)=>void;history?:PlacemarkHistory}) {
   const {points,loading,error,retry,manualOrder,orderReady,saving,orderError,saveOrder,editing,editReady,editError,movePhoto,movePoint,updatePoint,canUndo,canRedo,undo,redo,groups,groupReady,groupError,grouping,saveGroups,moveGroup,routeReady,routeError,routeContext,createPoint,deletePoints,movePointTo}=useTrackPlacemarks(track,history)
+  const lastRefresh=useRef(refreshToken)
+  useEffect(()=>{if(lastRefresh.current!==refreshToken){lastRefresh.current=refreshToken;retry()}},[refreshToken,retry])
   const {settings,updateSettings}=useMapSettings()
   const [typeFilter,setTypeFilter]=useState<PlacemarkTypeFilter>(ALL_PLACEMARK_TYPES)
   const typeOptions=useMemo(()=>placemarkTypeOptions(points),[points])
@@ -110,7 +112,18 @@ function PlacemarkView({track,basemap,onBasemap,editable,onBusyChange,history}:P
     window.addEventListener('blur',cancel)
     return()=>{window.removeEventListener('blur',cancel);release()}
   },[track.id])
-  useEffect(()=>{if(selected)Array.from(list.current?.querySelectorAll<HTMLElement>('[data-placemark-id]')||[]).find(row=>row.dataset.placemarkId===selected)?.scrollIntoView?.({block:'nearest'})},[selected,expanded])
+  useEffect(()=>{
+    const container=list.current
+    if(!selected||!container||container.clientHeight<=0)return
+    const row=Array.from(container.querySelectorAll<HTMLElement>('[data-placemark-id]')).find(item=>item.dataset.placemarkId===selected)
+    if(!row)return
+    const bounds=container.getBoundingClientRect(),rowBounds=row.getBoundingClientRect()
+    if(bounds.height<=0||rowBounds.height<=0)return
+    const top=bounds.top+container.clientTop,bottom=top+container.clientHeight
+    // Keep selection visible inside the list without scrolling its ancestors.
+    if(rowBounds.top<top)container.scrollTop+=rowBounds.top-top
+    else if(rowBounds.bottom>bottom)container.scrollTop+=rowBounds.bottom-bottom
+  },[selected,expanded])
   useEffect(()=>{const parent=groups.find(group=>group.memberIds.includes(selected||''));if(parent)setExpanded(current=>current.has(parent.id)?current:new Set([...current,parent.id]))},[selected,groups])
   useEffect(()=>{if(!busy)setChecked(current=>{const next=current.filter(id=>points.some(point=>point.id===id)||groups.some(group=>group.id===id));return next.length===current.length?current:next})},[points,groups,busy])
   useEffect(()=>{if(selectionDisabled)setContextMenu(null)},[selectionDisabled])
@@ -484,6 +497,7 @@ function PlacemarkView({track,basemap,onBasemap,editable,onBusyChange,history}:P
         <label>移动到点位<select aria-label="照片移动到点位" value={moveTarget} disabled={photoDisabled||selectionDisabled||!selectedPhoto} onChange={event=>setMoveTarget(event.target.value)}><option value="">选择目标点位</option>{points.map((point,index)=>point.id!==selectedPoint.id&&<option key={point.id} value={point.id}>{index+1}{placemarkTitle(point)?` · ${placemarkTitle(point)}`:''}</option>)}</select></label>
         <button className="trk-secondary" disabled={photoDisabled||selectionDisabled||!selectedPhoto||!moveTarget} onClick={()=>{void transferPhoto(selectedPoint.id,moveTarget,selectedPhoto)}}>移动照片</button>
       </div>}
+      {!editable&&onPhotoAI&&selectedPoint&&<div className="trk-overview-photo-editor" aria-label="点位照片 AI 图片创作">{photos.length?photos.map((url,index)=><button type="button" key={url} className="trk-secondary" onClick={()=>onPhotoAI(url)}>用第 {index+1} 张照片创作</button>):<span className="trk-muted">此点位还没有照片，请先在标注点编辑中添加照片。</span>}</div>}
     </aside>
   </div>
     {track.metrics.elevationMax !== null

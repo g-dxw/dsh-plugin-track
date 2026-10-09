@@ -16,14 +16,80 @@ function mount(point = POINT, close = vi.fn(), options: PlacemarkDetailsOptions 
   mounted.push(details)
   return details
 }
+function loadImage(image: HTMLImageElement, width: number, height: number) {
+  Object.defineProperties(image, {naturalWidth: {configurable: true, value: width}, naturalHeight: {configurable: true, value: height}})
+  image.dispatchEvent(new Event('load'))
+}
+
 afterEach(() => {for (const details of mounted.splice(0)) details.remove()})
 
 const GROUP:PlacemarkGroup={id:'group-11111111-1111-4111-8111-111111111111',name:'沿线风景',description:'组描述',coordinates:[121,31],memberIds:[POINT.id,'kml-2']}
 const SECOND:TrackPlacemark={id:'kml-2',name:'山口',description:'山口说明',coordinates:[122,32],images:[POINT.images[0]],type:['营地'],elevation:200,time:1700000000000}
-function mountGroup(points=[POINT,SECOND],options:PlacemarkGroupDetailsOptions={}) {
-  const details=createPlacemarkGroupDetails(GROUP,points,vi.fn(),options);document.body.append(details);mounted.push(details);return details
+function mountGroup(points=[POINT,SECOND],options:PlacemarkGroupDetailsOptions={},group=GROUP) {
+  const details=createPlacemarkGroupDetails(group,points,vi.fn(),options);document.body.append(details);mounted.push(details);return details
 }
 describe('group photo details',()=>{
+  it('shows a shared location once while retaining the image and source child metadata',()=>{
+    const location='位置：木马坳附近。',group={...GROUP,description:location}
+    const point={...POINT,name:'木马坳',description:location,images:[POINT.images[0]],elevation:1456,time:1700000000000}
+    const points=[point,SECOND],original=JSON.stringify({group,points})
+    const details=mountGroup(points,{},group)
+    expect([...details.querySelectorAll('.trk-placemark-details-description')].map(element=>element.textContent)).toEqual([location])
+    expect(details.querySelector('img')?.src).toBe(POINT.images[0])
+    expect(details.querySelector('.trk-placemark-details-member')?.textContent).toBe('木马坳')
+    const metadata=details.querySelector('.trk-placemark-details-metadata')!
+    expect(metadata.textContent).toContain('1456');expect(metadata.textContent).toContain(formatPlacemarkTime(point.time))
+    expect(metadata.textContent).toContain('120.000000');expect(metadata.textContent).toContain('30.000000')
+    expect(JSON.stringify({group,points})).toBe(original)
+    expect(mount(point).querySelector('.trk-placemark-details-description')?.textContent).toBe(location)
+  })
+
+  it('retains unique child notes and recomputes shared locations when browsing different children',()=>{
+    const location='位置：木马坳附近。',group={...GROUP,description:`组说明\n${location}`}
+    const points=[{...POINT,images:[POINT.images[0]],description:`天气晴\n${location}\n岔路右转`},{...SECOND,description:'山口说明\n位置：山口附近。'}]
+    const original=JSON.stringify({group,points}),details=mountGroup(points,{},group)
+    const descriptions=()=>[...details.querySelectorAll('.trk-placemark-details-description')].map(element=>element.textContent)
+    expect(descriptions()).toEqual([group.description,'天气晴\n岔路右转'])
+    details.querySelector<HTMLButtonElement>('[aria-label="下一张组图片"]')!.click()
+    expect(descriptions()).toEqual([group.description,points[1].description])
+    expect(details.querySelector('[data-group-member-id]')?.getAttribute('data-group-member-id')).toBe(SECOND.id)
+    expect(details.querySelector('.trk-placemark-details-metadata')?.textContent).toContain('122.000000')
+    expect(details.querySelector('img')?.src).toBe(SECOND.images[0])
+    details.querySelector<HTMLButtonElement>('[aria-label="上一张组图片"]')!.click()
+    expect(descriptions()).toEqual([group.description,'天气晴\n岔路右转'])
+    expect(details.querySelector('[data-group-member-id]')?.getAttribute('data-group-member-id')).toBe(POINT.id)
+    expect(details.textContent).not.toContain('山口说明')
+    expect(JSON.stringify({group,points})).toBe(original)
+    expect(mount(points[0]).querySelector('.trk-placemark-details-description')?.textContent).toBe(points[0].description)
+  })
+
+  it.each([
+    {group:'组说明\r\n 位置 : 木马坳附近。 \r\n',child:'\r\n位置：木马坳附近。\r\n点位说明',remaining:'点位说明'},
+    {group:'位置： 木马坳附近。 ',child:'点位说明\r 位置 : 木马坳附近。 \r',remaining:'点位说明'},
+    {group:'\r组说明\r位置：木马坳附近。\r',child:' 位置 : 木马坳附近。 ',remaining:''},
+  ])('deduplicates independent location lines across whitespace, colons and line endings: $child',({group:description,child,remaining})=>{
+    const group={...GROUP,description},points=[{...POINT,description:child},SECOND],original=JSON.stringify({group,points})
+    const details=mountGroup(points,{},group)
+    const paragraphs=[...details.querySelectorAll('.trk-placemark-details-description')].map(element=>element.textContent)
+    expect(paragraphs[0]).toBe(description)
+    if(remaining) expect(paragraphs[1]?.trim()).toBe(remaining)
+    expect(paragraphs).toHaveLength(remaining?2:1)
+    expect(JSON.stringify({group,points})).toBe(original)
+  })
+
+  it.each([
+    {group:'位置：木马坳附近。',child:'位置：木马坳东侧。'},
+    {group:'位置：木马坳附近。',child:'位置：木马坳附近.'},
+    {group:'位置：木马坳附近。',child:'位置：木马 坳附近。'},
+    {group:'位置：木马坳附近。',child:'补充说明：位置：木马坳附近。'},
+    {group:'共同说明',child:'共同说明'},
+    {group:'组说明',child:'  点位说明\r\n位置：木马坳附近。 \r\n'},
+    {group:'位置：',child:'位置：木马坳附近。'},
+  ])('preserves unmatched locations and ordinary descriptions exactly: $child',({group:description,child})=>{
+    const details=mountGroup([{...POINT,description:child},SECOND],{},{...GROUP,description})
+    expect([...details.querySelectorAll('.trk-placemark-details-description')].map(element=>element.textContent)).toEqual([description,child])
+  })
+
   it('keeps group and child information in a separate region from carousel and actions after image loading',()=>{
     const details=mountGroup([{...POINT,description:'较长的子点说明\n'.repeat(40)},SECOND],{onViewImage:vi.fn(),onEdit:vi.fn()})
     const body=details.querySelector('.trk-placemark-details-body')!
@@ -48,13 +114,61 @@ describe('group photo details',()=>{
     const failed=mountGroup([POINT,SECOND],{onViewImage:vi.fn(),onEdit:vi.fn()})
     failed.querySelector('img')!.dispatchEvent(new Event('error'))
     expect(failed.querySelector('.trk-placemark-details-photo-ready')).toBeNull()
+    expect(failed.querySelector('.trk-placemark-details-photo-overlay')).toBeNull()
     expect(failed.querySelector('.trk-placemark-group-info-scroll')?.querySelector('.trk-placemark-details-metadata')).not.toBeNull()
     expect(failed.querySelector('.trk-placemark-details-actions')?.parentElement?.className).toBe('trk-placemark-details-body')
     const empty=mountGroup([{...POINT,images:[]},{...SECOND,images:[]}],{onEdit:vi.fn()})
     expect(empty.querySelector('img,.trk-placemark-details-carousel')).toBeNull()
+    expect(empty.querySelector('.trk-placemark-details-photo-overlay')).toBeNull()
     expect(empty.querySelector('.trk-placemark-details-empty')?.textContent).toBe('暂无图片')
     expect(empty.querySelector('.trk-placemark-group-info-scroll')?.textContent).toContain(POINT.description)
     expect(empty.querySelector('[aria-label="编辑标记组"]')?.parentElement?.parentElement?.className).toBe('trk-placemark-details-body')
+  })
+
+  it('changes group layout from a ready wide slide to a portrait overlay and back without losing carousel or viewer controls', () => {
+    const changed = vi.fn(), view = vi.fn(), edit = vi.fn()
+    const points = [{...POINT, images: [POINT.images[0]]}, {...SECOND, images: [POINT.images[1]]}]
+    const original = JSON.stringify(points)
+    const details = mountGroup(points, {onChangePhoto: changed, onViewImage: view, onEdit: edit, maxWidth: 420, maxHeight: 568})
+    const assertControls = () => {
+      const body = details.querySelector('.trk-placemark-details-body')!
+      expect([...body.children].map(element => element.className)).toEqual(['trk-placemark-group-info-scroll', 'trk-placemark-details-carousel', 'trk-placemark-details-actions'])
+      expect(body.querySelector('[aria-label="上一张组图片"]')).not.toBeNull()
+      expect(body.querySelector('[aria-label="下一张组图片"]')).not.toBeNull()
+      expect(body.querySelector('.trk-placemark-details-view')?.parentElement?.parentElement).toBe(body)
+      expect(body.querySelector('[aria-label="编辑标记组"]')?.parentElement?.parentElement).toBe(body)
+      expect(body.querySelector('.trk-placemark-group-info-scroll')?.textContent).toContain(GROUP.description)
+    }
+    const wide = details.querySelector('img')!
+    loadImage(wide, 2400, 600)
+    const first = details.querySelector<HTMLElement>('.trk-placemark-details')!
+    expect(first.classList.contains('trk-placemark-details-photo-ready')).toBe(true)
+    expect(first.classList.contains('trk-placemark-details-photo-overlay')).toBe(false)
+    expect(first.style.width).toBe('420px'); expect(details.textContent).toContain('1 / 2'); assertControls()
+    details.querySelector<HTMLButtonElement>('[aria-label="下一张组图片"]')!.click()
+    expect(wide.isConnected).toBe(false)
+    const portrait = details.querySelector('img')!, second = details.querySelector<HTMLElement>('.trk-placemark-details')!
+    expect(second.classList.contains('trk-placemark-details-photo-overlay')).toBe(false)
+    loadImage(portrait, 1200, 2400)
+    expect(second.classList.contains('trk-placemark-details-photo-ready')).toBe(true)
+    expect(second.classList.contains('trk-placemark-details-photo-overlay')).toBe(true)
+    expect(details.querySelector('[data-group-member-id]')?.getAttribute('data-group-member-id')).toBe(SECOND.id)
+    expect(details.textContent).toContain('2 / 2'); assertControls()
+    details.querySelector<HTMLButtonElement>('.trk-placemark-details-view')!.click()
+    expect(view).toHaveBeenLastCalledWith(POINT.images[1], 1)
+    details.querySelector<HTMLButtonElement>('[aria-label="下一张组图片"]')!.click()
+    const returned = details.querySelector<HTMLElement>('.trk-placemark-details')!
+    expect(returned.classList.contains('trk-placemark-details-photo-ready')).toBe(false)
+    expect(returned.classList.contains('trk-placemark-details-photo-overlay')).toBe(false)
+    loadImage(details.querySelector('img')!, 2400, 600)
+    expect(returned.classList.contains('trk-placemark-details-photo-ready')).toBe(true)
+    expect(returned.classList.contains('trk-placemark-details-photo-overlay')).toBe(false)
+    expect(details.querySelector('[data-group-member-id]')?.getAttribute('data-group-member-id')).toBe(POINT.id)
+    expect(details.textContent).toContain('1 / 2'); assertControls()
+    details.querySelector<HTMLButtonElement>('.trk-placemark-details-view')!.click()
+    expect(view).toHaveBeenLastCalledWith(POINT.images[0], 0)
+    expect(changed.mock.calls.map(([photo]) => photo)).toEqual([{pointId: SECOND.id, url: POINT.images[1]}, {pointId: POINT.id, url: POINT.images[0]}])
+    expect(JSON.stringify(points)).toBe(original)
   })
 
   it('chooses the cover by both source child and URL when two children share the same image',()=>{
@@ -260,17 +374,95 @@ describe('point details opened from the map', () => {
     expect(view).toHaveBeenLastCalledWith(POINT.images[0], 0)
   })
 
-  it('marks loaded photo cards for information floating over the photo bottom', () => {
+  it.each([
+    {name: 'wide browser regression', width: 2400, height: 600, maxWidth: 420, maxHeight: 568, overlay: false, fittedWidth: 420},
+    {name: 'portrait', width: 1200, height: 2400, maxWidth: 420, maxHeight: 568, overlay: true, fittedWidth: 284},
+    {name: 'portrait in a short canvas', width: 1200, height: 2400, maxWidth: 420, maxHeight: 200, overlay: false, fittedWidth: 100},
+    {name: 'just below 240 px', width: 840, height: 478, maxWidth: 420, maxHeight: 568, overlay: false, fittedWidth: 420},
+    {name: 'exactly 240 px', width: 840, height: 480, maxWidth: 420, maxHeight: 568, overlay: true, fittedWidth: 420},
+  ])('keeps readiness separate from the information overlay for $name', ({width, height, maxWidth, maxHeight, overlay, fittedWidth}) => {
+    const view = vi.fn(), edit = vi.fn()
+    const details = mount({...POINT, images: [POINT.images[0]]}, vi.fn(), {maxWidth, maxHeight, onViewImage: view, onEdit: edit})
+    expect(details.classList.contains('trk-placemark-details-photo-ready')).toBe(false)
+    expect(details.classList.contains('trk-placemark-details-photo-overlay')).toBe(false)
+    loadImage(details.querySelector('img')!, width, height)
+    expect(details.classList.contains('trk-placemark-details-photo-ready')).toBe(true)
+    expect(details.classList.contains('trk-placemark-details-photo-loading')).toBe(false)
+    expect(details.classList.contains('trk-placemark-details-photo-overlay')).toBe(overlay)
+    expect(parseFloat(details.style.width)).toBeCloseTo(fittedWidth, 6)
+    expect(details.querySelector('.trk-placemark-details-body')?.textContent).toContain(POINT.description)
+    details.querySelector<HTMLButtonElement>('.trk-placemark-details-view')!.click()
+    details.querySelector<HTMLButtonElement>('.trk-placemark-details-edit')!.click()
+    expect(view).toHaveBeenCalledExactlyOnceWith(POINT.images[0], 0); expect(edit).toHaveBeenCalledOnce()
+  })
+
+  it.each([
+    {height: 600, overlay: false}, // 100 + 8 + 100 = 208 fitted CSS pixels.
+    {height: 696, overlay: true}, // 116 + 8 + 116 = the 240 px threshold.
+  ])('requires all images ready and counts their fitted heights plus the photo gap, height=$height', ({height, overlay}) => {
+    const details = mount(POINT, vi.fn(), {maxWidth: 400, maxHeight: 568})
+    const images = [...details.querySelectorAll('img')]
+    loadImage(images[0], 2400, height)
+    expect(details.classList.contains('trk-placemark-details-photo-ready')).toBe(false)
+    expect(details.classList.contains('trk-placemark-details-photo-overlay')).toBe(false)
+    loadImage(images[1], 2400, height)
+    expect(details.classList.contains('trk-placemark-details-photo-ready')).toBe(true)
+    expect(details.classList.contains('trk-placemark-details-photo-overlay')).toBe(overlay)
+  })
+
+  it('uses the first photo card width when estimating the rendered height of a wider second photo', () => {
+    for (const secondHeight of [100, 180]) {
+      const details = mount(POINT, vi.fn(), {maxWidth: 400, maxHeight: 568})
+      const [first, second] = [...details.querySelectorAll('img')]
+      loadImage(first, 100, 120); loadImage(second, 300, secondHeight)
+      expect(details.style.width).toBe('100px'); expect(second.style.width).toBe('300px'); expect(second.style.maxWidth).toBe('100%')
+      expect(details.classList.contains('trk-placemark-details-photo-ready')).toBe(true)
+      // The second image shrinks to the card's 100 px width. For height 180,
+      // the uncorrected sum is 308 px, but its rendered sum is 120 + 60 + 8.
+      expect(details.classList.contains('trk-placemark-details-photo-overlay')).toBe(false)
+    }
+  })
+
+  it('clears an overlay on failure and retry, then recomputes it from the retried image dimensions', () => {
+    const details = mount({...POINT, images: [POINT.images[0]]}, vi.fn(), {maxWidth: 420, maxHeight: 568, onViewImage: vi.fn()})
+    const tall = details.querySelector('img')!
+    loadImage(tall, 1200, 2400)
+    expect(details.classList.contains('trk-placemark-details-photo-overlay')).toBe(true)
+    tall.dispatchEvent(new Event('error'))
+    expect(details.classList.contains('trk-placemark-details-photo-overlay')).toBe(false)
+    expect(details.classList.contains('trk-placemark-details-photo-ready')).toBe(false)
+    expect(details.classList.contains('trk-placemark-details-photo-error')).toBe(true)
+    details.querySelector<HTMLButtonElement>('[aria-label="重试图片 1"]')!.click()
+    expect(details.classList.contains('trk-placemark-details-photo-overlay')).toBe(false)
+    expect(details.classList.contains('trk-placemark-details-photo-loading')).toBe(true)
+    const wide = details.querySelector('img')!
+    expect(wide).not.toBe(tall); loadImage(wide, 2400, 600)
+    expect(details.classList.contains('trk-placemark-details-photo-ready')).toBe(true)
+    expect(details.classList.contains('trk-placemark-details-photo-error')).toBe(false)
+    expect(details.classList.contains('trk-placemark-details-photo-overlay')).toBe(false)
+    expect(details.style.width).toBe('420px')
+    wide.dispatchEvent(new Event('error'))
+    expect(details.classList.contains('trk-placemark-details-photo-overlay')).toBe(false)
+    details.querySelector<HTMLButtonElement>('[aria-label="重试图片 1"]')!.click()
+    loadImage(details.querySelector('img')!, 1200, 2400)
+    expect(details.classList.contains('trk-placemark-details-photo-ready')).toBe(true)
+    expect(details.classList.contains('trk-placemark-details-photo-overlay')).toBe(true)
+    expect(parseFloat(details.style.width)).toBeCloseTo(284, 6)
+  })
+
+  it('marks tall loaded photo cards for information floating over the photo bottom', () => {
     const details = mount()
     expect(details.classList.contains('trk-placemark-details-with-photos')).toBe(true)
     expect(details.classList.contains('trk-placemark-details-photo-loading')).toBe(true)
     expect(details.classList.contains('trk-placemark-details-photo-ready')).toBe(false)
+    expect(details.classList.contains('trk-placemark-details-photo-overlay')).toBe(false)
     const images = [...details.querySelectorAll('img')]
     for (const image of images) {
       Object.defineProperties(image, {naturalWidth: {value: 1280}, naturalHeight: {value: 2275}})
       image.dispatchEvent(new Event('load'))
     }
     expect(details.classList.contains('trk-placemark-details-photo-ready')).toBe(true)
+    expect(details.classList.contains('trk-placemark-details-photo-overlay')).toBe(true)
     expect(details.classList.contains('trk-placemark-details-photo-loading')).toBe(false)
     expect(details.classList.contains('trk-placemark-details-photo-error')).toBe(false)
     expect(details.querySelector('.trk-placemark-details-body')?.textContent).toContain(POINT.description)
@@ -292,8 +484,10 @@ describe('point details opened from the map', () => {
       image.dispatchEvent(new Event('load'))
     }
     expect(details.classList.contains('trk-placemark-details-photo-ready')).toBe(true)
+    expect(details.classList.contains('trk-placemark-details-photo-overlay')).toBe(true)
     images[1].dispatchEvent(new Event('error'))
     expect(details.classList.contains('trk-placemark-details-photo-ready')).toBe(false)
+    expect(details.classList.contains('trk-placemark-details-photo-overlay')).toBe(false)
     expect(details.classList.contains('trk-placemark-details-photo-error')).toBe(true)
     const retry = details.querySelector<HTMLButtonElement>('[aria-label="重试图片 2"]')!
     expect(retry.disabled).toBe(false)
@@ -302,10 +496,12 @@ describe('point details opened from the map', () => {
     expect(details.classList.contains('trk-placemark-details-photo-error')).toBe(false)
     expect(details.classList.contains('trk-placemark-details-photo-loading')).toBe(true)
     expect(details.classList.contains('trk-placemark-details-photo-ready')).toBe(false)
+    expect(details.classList.contains('trk-placemark-details-photo-overlay')).toBe(false)
     const retried = details.querySelectorAll('img')[1]
     Object.defineProperties(retried, {naturalWidth: {value: 1280}, naturalHeight: {value: 2275}})
     retried.dispatchEvent(new Event('load'))
     expect(details.classList.contains('trk-placemark-details-photo-ready')).toBe(true)
+    expect(details.classList.contains('trk-placemark-details-photo-overlay')).toBe(true)
     expect(details.classList.contains('trk-placemark-details-photo-loading')).toBe(false)
   })
 

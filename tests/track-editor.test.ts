@@ -9,6 +9,8 @@ import * as gpxExport from '../src/track/gpx-export.ts'
 import { UPLOADS, type TrackInput, type TrackPoint, type TrackRecord } from '../src/protocol.ts'
 import { api } from '../src/client/util.ts'
 import type { TrackAnnotation } from '../src/track/annotations.ts'
+vi.mock('../src/client/useTrackPlacemarks.ts',async importOriginal=>({...await importOriginal<typeof import('../src/client/useTrackPlacemarks.ts')>(),loadTrackPlacemarkState:vi.fn(async (track:TrackRecord)=>({points:track.placemarks||[],groups:[]}))}))
+
 
 vi.mock('../src/client/util.ts', async importOriginal => ({
   ...await importOriginal<typeof import('../src/client/util.ts')>(), api: vi.fn(),
@@ -308,7 +310,7 @@ describe('track editor drafts and copy saving', () => {
       annotations: (data as {annotations: TrackAnnotation[]}).annotations,
     }) as never)
     await click('保存画布')
-    expect(api).toHaveBeenLastCalledWith('annotations', {id: 'original', annotations: [{...SVG_POINT, label: '牧场'}]})
+    expect(api).toHaveBeenLastCalledWith('annotations', {canvas:{width:1200,height:900},id: 'original', annotations: [{...SVG_POINT, label: '牧场'}]})
     expect(props.onSave).not.toHaveBeenCalled()
     expect(button('保存画布').disabled).toBe(true)
     await click('返回轨迹')
@@ -639,7 +641,7 @@ describe('route-associated SVG artwork and transforms across editor tabs',()=>{
   await click('标注点编辑');await click('返回轨迹');expect(props.onCancel).not.toHaveBeenCalled();expect(container.textContent).toContain('还有未保存的修改');await click('继续编辑');await click('线路编辑');await click('SVG 标注')
   expect(container.querySelector('.trk-svg-canvas')).toBe(route);expect(container.querySelector('.trk-art-overlay-canvas')).toBe(overlay);expect(Number(route.dataset.viewScale)).toBe(1.5);expect(['title','north'].map(id=>overlay.querySelector(`[data-art-text-id="${id}"]`)!.outerHTML)).toEqual(fixed);expect(overlay.querySelector('[data-route-annotations]')?.getAttribute('transform')).toBe('translate(0 0) scale(1.5)');expect(api).toHaveBeenCalledTimes(1)
   await click('撤销');expect(Number(route.dataset.viewScale)).toBe(1);expect(button('保存画布').disabled).toBe(true);await click('重做');expect(Number(route.dataset.viewScale)).toBe(1.5)
-  vi.mocked(api).mockImplementation(async(_action,data)=>data as never);await click('保存画布');expect(api).toHaveBeenLastCalledWith('annotations',{id:'original',annotations:[SVG_POINT],route:{x:0,y:0,scale:1.5}});expect(props.onSave).not.toHaveBeenCalled()
+  vi.mocked(api).mockImplementation(async(_action,data)=>data as never);await click('保存画布');expect(api).toHaveBeenLastCalledWith('annotations',{canvas:{width:1200,height:900},id:'original',annotations:[SVG_POINT],route:{x:0,y:0,scale:1.5}});expect(props.onSave).not.toHaveBeenCalled()
   await click('返回轨迹');expect(props.onCancel).toHaveBeenCalledOnce()
  })
 })

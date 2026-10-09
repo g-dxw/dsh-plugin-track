@@ -23,7 +23,7 @@ export function apply(ctx: Context): void {
   const getAgentServices = (): TrackAgentServices | undefined => {
     const sessions = ctx.get('sessions'), workspaces = ctx.get('workspaces'), uiWorkspace = ctx.get('uiWorkspace'), layout = ctx.get('layout')
     if (!sessions || !workspaces || !uiWorkspace || !layout) return undefined
-    return {sessions, workspaces, uiWorkspace, layout} as unknown as TrackAgentServices
+    return {sessions, workspaces, uiWorkspace, layout, conversation: ctx.get('conversation')} as unknown as TrackAgentServices
   }
   ctx.slots.inject('main', () => ctx.slots.register({name: 'main', key: PANEL}, () => <TrackPanel getAgentServices={getAgentServices} />))
   // 43 sits after e剪宝 (41) and 一稿多发 (42): the three are one family and read

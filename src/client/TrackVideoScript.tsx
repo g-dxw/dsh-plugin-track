@@ -12,6 +12,7 @@ import { ShotCaseLab } from './ShotCaseLab.tsx'
 import { ShotEditor } from './ShotEditor.tsx'
 import { GeoMotionEditor } from './GeoMotionEditor.tsx'
 import { VideoMaterialPrep } from './VideoMaterialPrep.tsx'
+import { VideoResourceSelections } from './VideoResourceSelections.tsx'
 import type { VideoMaterialsDocument } from '../track/video-materials.ts'
 import { api, clipboardSafeName, download } from './util.ts'
 
@@ -28,7 +29,7 @@ function TrackVideoWorkspace(props:Props) {
   if(mode==='editing')return <ShotEditor {...props} onCases={()=>setMode('cases')} />
   if(mode==='geomotion')return <GeoMotionEditor {...props} preparedMaterials={preparedMaterials??undefined} onMaterials={()=>setMode('materials')} onCases={()=>setMode('cases')} />
   return mode==='cases'
-    ? <ShotCaseLab {...props} onPlanning={()=>setMode('planning')} onEditing={()=>setMode('editing')} onMaterials={()=>setMode('materials')} onGeoMotion={()=>{setPreparedMaterials(null);setMode('geomotion')}} />
+    ? <><VideoResourceSelections trackId={props.track.id} trackName={props.track.name}/><ShotCaseLab {...props} onPlanning={()=>setMode('planning')} onEditing={()=>setMode('editing')} onMaterials={()=>setMode('materials')} onGeoMotion={()=>{setPreparedMaterials(null);setMode('geomotion')}} /></>
     : <TrackVideoScriptPlanning {...props} onCases={()=>setMode('cases')} />
 }
 export function TrackVideoScriptPlanning(props:Props & {onCases?:()=>void}) {return <VideoScriptWorkspace key={props.track.id} {...props} />}
@@ -191,6 +192,7 @@ function VideoScriptWorkspace({track,basemap,onBasemap,onCancel,onCases}:Props &
 
   return <section className="trk-video-script" aria-label="轨迹视频脚本制作台"><style>{VIDEO_SCRIPT_CSS}</style>
     <header className="trk-vs-header"><div><h2>轨迹视频脚本</h2><p className="trk-muted">先看轨迹能讲什么，再选择镜头、编辑脚本并逐镜确认。</p></div><div className="trk-vs-actions">{onCases&&<button className="trk-secondary" onClick={onCases}>返回镜头案例</button>}<button className="trk-secondary" onClick={onCancel}>返回轨迹</button></div></header>
+    <VideoResourceSelections trackId={track.id} trackName={track.name}/>
     <nav className="trk-vs-steps" aria-label="脚本制作步骤"><button className={step==='information'?'trk-primary':'trk-secondary'} aria-current={step==='information'?'step':undefined} onClick={()=>{setStep('information');setReplaceRequested(false)}}>1 · 分析信息与选题</button><button className={step==='script'?'trk-primary':'trk-secondary'} aria-current={step==='script'?'step':undefined} disabled={!draft} onClick={()=>setStep('script')}>2 · 镜头与脚本审阅</button></nav>
     <div className="trk-vs-map"><MapView trackId={track.id} points={track.coordinates} segmentStarts={track.segmentStarts} name={track.name} basemap={basemap} onBasemap={onBasemap} placemarks={mapPoints} selectedPlacemark={selectedPlacemark} onSelectPlacemark={setSelectedPlacemark} onClosePlacemark={()=>setSelectedPlacemark(null)} placemarkEditingDisabled /></div>
     <p className="trk-muted trk-vs-map-note">地图用于核对轨迹和选题位置；下方是镜头计划，实际运镜视频尚未生成。</p>

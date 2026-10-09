@@ -198,10 +198,10 @@ describe('the panel import and original-file export', () => {
     const original = await fetchFromNode(base + API + '/source?id=' + id)
     expect(await original.text()).toBe(source)
     const before = await fetchFromNode(base + API + '/annotations?id=' + id)
-    expect(await before.json()).toEqual({annotations: [], saved: false, layout: {}, route: {x: 0, y: 0, scale: 1}})
+    expect(await before.json()).toEqual({annotations: [], saved: false, layout: {}, route: {x: 0, y: 0, scale: 1}, canvas: {width: 1200, height: 900}, canvasSaved: false, styles: {}})
     const save = await fetchFromNode(base + API + '/annotations', {method: 'POST', headers: {'content-type': 'application/json', 'x-cqai-track': '1'}, body: JSON.stringify({id, annotations: []})})
     expect(save.ok).toBe(true)
-    expect(await (await fetchFromNode(base + API + '/annotations?id=' + id)).json()).toEqual({annotations: [], saved: true, layout: {}, route: {x: 0, y: 0, scale: 1}})
+    expect(await (await fetchFromNode(base + API + '/annotations?id=' + id)).json()).toEqual({annotations: [], saved: true, layout: {}, route: {x: 0, y: 0, scale: 1}, canvas: {width: 1200, height: 900}, canvasSaved: false, styles: {}})
   })
 
   it.each([

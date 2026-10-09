@@ -4,9 +4,10 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {placemarkPhotoThumbnailUrl,placemarkPhotoOriginalUrl} from '../src/track/placemark-photo-assets.ts'
 import { MapView } from '../src/client/MapView.tsx'
+import { TrackOverview } from '../src/client/TrackOverview.tsx'
 import {locatePlacemarkCandidates} from '../src/track/placemark-location.ts'
-import { MAP_SETTINGS_KEY, readMapSettings, writeMapSettings } from '../src/track/map-settings.ts'
-import type { PlacemarkGroup, TrackPlacemark, TrackPoint } from '../src/protocol.ts'
+import { DEFAULT_MAP_SETTINGS, MAP_SETTINGS_KEY, readMapSettings, writeMapSettings } from '../src/track/map-settings.ts'
+import type { PlacemarkGroup, TrackPlacemark, TrackPoint, TrackRecord } from '../src/protocol.ts'
 import type { SandboxPlacemark } from '../src/track/sandbox/types.ts'
 
 type MapStub = {on: ReturnType<typeof vi.fn>; container: HTMLElement; easeTo: ReturnType<typeof vi.fn>; remove: ReturnType<typeof vi.fn>; project: ReturnType<typeof vi.fn>; unproject: ReturnType<typeof vi.fn>; fitBounds: ReturnType<typeof vi.fn>}
@@ -23,11 +24,31 @@ type PopupStub = {
   map: MapStub | null
   coordinates: [number, number] | null
 }
+type FloatingOptions = {
+  visible?: boolean; selectedId?: string | null; labelColor?: string; labelSize?: number; labelHeight?: number; connectorColor?: string
+  onSelect?: (id: string) => void
+}
+type FloatingStub = {
+  map: MapStub; container: HTMLElement
+  update: ReturnType<typeof vi.fn<(markers: readonly SandboxPlacemark[], options: FloatingOptions) => void>>
+  getButton: ReturnType<typeof vi.fn<(id: string) => HTMLButtonElement | undefined>>
+  dispose: ReturnType<typeof vi.fn<() => void>>
+}
 const state = vi.hoisted(() => ({
   maps: [] as MapStub[], markers: [] as MarkerStub[], popups: [] as PopupStub[], noWebGL: false,
-  sampler: vi.fn(), renderers: [] as {updatePlacemarks: ReturnType<typeof vi.fn>}[],
+  sampler: vi.fn(), floating: [] as FloatingStub[], renderers: [] as {updatePlacemarks: ReturnType<typeof vi.fn>}[],
+  overview: {points: [] as TrackPlacemark[], groups: [] as PlacemarkGroup[]},
 }))
 
+// Keep the real Overview selection/expansion effects in the integration case;
+// only its persisted data and the unrelated profile renderer are replaced.
+vi.mock('../src/client/useTrackPlacemarks.ts', () => ({useTrackPlacemarks: () => ({
+  ...state.overview, loading: false, error: '', stateError: '', retry: vi.fn(), manualOrder: false,
+  orderReady: true, editReady: true, groupReady: true, routeReady: true, routeContext: {segmentStarts: [0]},
+  saving: false, editing: false, grouping: false, orderError: '', editError: '', groupError: '', routeError: '',
+  canUndo: false, canRedo: false,
+})}))
+vi.mock('../src/client/ElevationChart.tsx', () => ({ElevationChart: () => null}))
 vi.mock('../src/client/maplibre-css.ts', () => ({
   MAP_STYLE: '.maplibregl-marker{left:0;position:absolute;top:0;transition:opacity .2s;will-change:transform}',
 }))
@@ -37,9 +58,51 @@ vi.mock('../src/track/trail-layer.ts', async importOriginal => ({
 vi.mock('../src/track/sandbox/sampling.ts', () => ({sampleSandboxDetached: state.sampler, isSandboxDEMError: () => false}))
 vi.mock('../src/track/sandbox/renderer.ts', () => ({
   SandboxRenderer: class {
-    build = vi.fn(); dispose = vi.fn(); zoomIn = vi.fn(); zoomOut = vi.fn(); resetView = vi.fn()
-    updatePlacemarks = vi.fn()
-    constructor() {state.renderers.push(this)}
+    build = vi.fn(); dispose = vi.fn(() => {for (const button of this.buttons.values()) button.remove(); this.buttons.clear()}); zoomIn = vi.fn(); zoomOut = vi.fn(); resetView = vi.fn()
+    buttons = new Map<string, HTMLButtonElement>()
+    options: FloatingOptions = {}
+    updatePlacemarks = vi.fn((markers: readonly SandboxPlacemark[], options: FloatingOptions) => {
+      this.options = options
+      const ids = new Set(markers.map(marker => marker.id))
+      for (const [id, button] of this.buttons) if (!ids.has(id)) {button.remove(); this.buttons.delete(id)}
+      for (const marker of markers) {
+        let button = this.buttons.get(marker.id)
+        if (!button) {
+          button = document.createElement('button'); button.dataset.sandboxPlacemark = marker.id
+          button.addEventListener('click', event => {event.stopPropagation(); if (this.options.visible !== false) this.options.onSelect?.(marker.id)})
+          this.buttons.set(marker.id, button); this.container.append(button)
+        }
+        button.textContent = marker.title || marker.label; button.hidden = options.visible === false
+        button.setAttribute('aria-pressed', String(options.selectedId === marker.id))
+      }
+    })
+    constructor(private container: HTMLElement) {state.renderers.push(this)}
+  },
+}))
+vi.mock('../src/track/map-floating-placemarks.ts', () => ({
+  MapFloatingPlacemarkLayer: class {
+    buttons = new Map<string, HTMLButtonElement>()
+    options: FloatingOptions = {}
+    update = vi.fn((markers: readonly SandboxPlacemark[], options: FloatingOptions) => {
+      this.options = options
+      const ids = new Set(markers.map(marker => marker.id))
+      for (const [id, button] of this.buttons) if (!ids.has(id)) {button.remove(); this.buttons.delete(id)}
+      for (const marker of markers) {
+        let button = this.buttons.get(marker.id)
+        if (!button) {
+          button = document.createElement('button'); button.type = 'button'
+          button.dataset.mapFloatingPlacemark = marker.id
+          button.addEventListener('click', () => {if (this.options.visible) this.options.onSelect?.(marker.id)})
+          this.buttons.set(marker.id, button); this.container.append(button)
+        }
+        button.textContent = marker.title || marker.label
+        button.hidden = !options.visible
+        button.setAttribute('aria-pressed', String(options.selectedId === marker.id))
+      }
+    })
+    getButton = vi.fn((id: string) => this.buttons.get(id))
+    dispose = vi.fn(() => {for (const button of this.buttons.values()) button.remove(); this.buttons.clear()})
+    constructor(public map: MapStub, public container: HTMLElement) {state.floating.push(this)}
   },
 }))
 vi.mock('maplibre-gl', () => ({
@@ -54,6 +117,8 @@ vi.mock('maplibre-gl', () => ({
     setStyle = vi.fn()
     setPaintProperty = vi.fn()
     getLayer = vi.fn(() => true)
+    // The marker integration fixture starts before MapLibre has loaded a style.
+    getStyle = vi.fn(() => undefined)
     on = vi.fn()
     remove = vi.fn(() => {
       // Real MapLibre removal also removes its popups and emits their close events.
@@ -155,8 +220,9 @@ beforeEach(() => {
   localStorage.clear()
   Object.defineProperty(HTMLDialogElement.prototype,'showModal',{configurable:true,value:function(this:HTMLDialogElement){this.setAttribute('open','')}})
   Object.defineProperty(HTMLDialogElement.prototype,'close',{configurable:true,value:function(this:HTMLDialogElement){this.removeAttribute('open')}})
-  state.maps = []; state.markers = []; state.popups = []; state.renderers = []; state.noWebGL = false
+  state.maps = []; state.markers = []; state.popups = []; state.renderers = []; state.floating = []; state.noWebGL = false
   state.sampler.mockReset().mockImplementation(() => new Promise(() => {}))
+  state.overview = {points: PLACEMARKS, groups: [GROUP]}
   closed = vi.fn<() => void>()
   moved = vi.fn<(id: string, coordinates: [number, number]) => void>()
   selectedFromMap = vi.fn<(id: string) => void>()
@@ -170,6 +236,7 @@ beforeEach(() => {
 afterEach(async () => {
   if (root) await act(async () => root!.unmount())
   root = null
+  expect(state.popups).toHaveLength(0)
   container.remove(); localStorage.clear()
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
@@ -185,7 +252,17 @@ function marker(id: string): HTMLElement {
 async function click(element: Element) {await act(async () => element.dispatchEvent(new MouseEvent('click', {bubbles: true})))}
 function details() {return container.querySelector<HTMLElement>('[role="dialog"]')!}
 function selection() {return container.querySelector('[data-selection]')!.textContent}
-function latestPopup() {return state.popups[state.popups.length - 1]}
+function detailsHost() {return container.querySelector<HTMLDivElement>('.trk-map-details')!}
+function expectFixedPanel() {
+  const host = detailsHost(), style = getComputedStyle(host)
+  expect(container.querySelectorAll('.trk-map-details')).toHaveLength(1)
+  expect(host.parentElement).toBe(mapWrapper()); expect(host.contains(details())).toBe(true)
+  expect(style.position).toBe('absolute'); expect(style.left).toBe('50%'); expect(style.top).toBe('50%')
+  expect(style.transform.replace(/\s/g, '')).toBe('translate(-50%,-50%)')
+  expect(state.popups).toHaveLength(0)
+  for (const map of state.maps) expect(map.easeTo).not.toHaveBeenCalled()
+  return host
+}
 async function pointer(element: Element, type: string, x: number, y: number, pointerId = 1) {
   const event = new MouseEvent(type, {bubbles: true, cancelable: true, button: 0, clientX: x, clientY: y})
   Object.defineProperty(event, 'pointerId', {value: pointerId})
@@ -202,11 +279,232 @@ function expectDetails(id: 'a' | 'b') {
   expect(details().getAttribute('aria-label')).toBe(`点位详情：${point.name}`)
   expect(details().textContent).toContain(point.description)
   expect([...details().querySelectorAll('img')].map(image => image.src)).toEqual(point.images)
+  expectFixedPanel()
 }
 
 const GROUP: PlacemarkGroup = {id:'group-11111111-1111-4111-8111-111111111111',name:'山间风景',description:'沿线景点合辑',memberIds:['a','b'],coordinates:[120.03,30.04],cover:{pointId:'a',imageUrl:PLACEMARKS[0].images[1]}}
 function groupMarker() {return container.querySelector<HTMLElement>(`[data-placemark-id="${GROUP.id}"]`)!}
 function currentGroupImage() {return container.querySelector<HTMLImageElement>('.trk-placemark-group-details img')?.src}
+
+function mapWrapper() {return container.querySelector<HTMLDivElement>('[data-track-map-view]')!}
+function displayModeInput() {return container.querySelector<HTMLSelectElement>('select[aria-label="显示模式"]')!}
+async function chooseDisplayMode(value: 'point' | 'marker') {
+  await act(async () => {const input = displayModeInput(); input.value = value; input.dispatchEvent(new Event('change', {bubbles: true}))})
+}
+async function changePointStyle(label: string, value: string) {
+  const input = container.querySelector<HTMLInputElement>(`input[aria-label="${label}"]`)!
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, value)
+    input.dispatchEvent(new Event('input', {bubbles: true}))
+  })
+}
+
+describe('map display mode and point style integration', () => {
+  it('reuses the native map and coordinate markers while switching terrain point and floating-marker modes, then disposes the helper', async () => {
+    const source = JSON.stringify({points: POINTS, placemarks: PLACEMARKS})
+    await render({editable: true})
+    const native = state.maps[0], coordinateMarkers = [...state.markers]
+    const coordinateCalls = coordinateMarkers.map(marker => marker.setLngLat.mock.calls.length)
+    const fitCount = native.fitBounds.mock.calls.length
+    expect(mapWrapper().dataset.placemarkMode).toBe('point')
+    expect(state.floating).toHaveLength(0)
+    await click(container.querySelector('[data-track-view="terrain"]')!)
+    expect(mapWrapper().dataset.trackMapView).toBe('terrain')
+    expect(mapWrapper().dataset.placemarkMode).toBe('point')
+    await click(container.querySelector('[data-map-display-trigger]')!)
+    expect(displayModeInput().value).toBe('point')
+    await chooseDisplayMode('marker')
+    expect(mapWrapper().dataset.placemarkMode).toBe('marker')
+    expect(state.floating).toHaveLength(1)
+    const floating = state.floating[0], firstUpdate = floating.update.mock.calls.at(-1)!
+    const floatingPoints = firstUpdate[0], button = floating.getButton('a')!
+    expect(floating.map).toBe(native)
+    expect(firstUpdate[0].map(point => [point.id, point.coordinates, point.label])).toEqual([['a', PLACEMARKS[0].coordinates, '1'], ['b', PLACEMARKS[1].coordinates, '2']])
+    expect(firstUpdate[1]).toMatchObject({visible: true, labelColor: '#ffffff', labelSize: 16, labelHeight: 1, connectorColor: '#ffffff'})
+    expect(button.hidden).toBe(false)
+    await click(button)
+    expect(selectedFromMap).toHaveBeenCalledExactlyOnceWith('a')
+    expect(selection()).toBe('a'); expectDetails('a')
+    expect(floating.update.mock.calls.at(-1)![1]).toMatchObject({selectedId: 'a', visible: true})
+    expect(floating.update.mock.calls.at(-1)![0]).toBe(floatingPoints)
+    await click(details().querySelector('[aria-label="关闭点位详情"]')!)
+    expect(closed).toHaveBeenCalledOnce(); expect(selection()).toBe('none')
+    expect(floating.getButton).toHaveBeenLastCalledWith('a'); expect(document.activeElement).toBe(button)
+    if (!container.querySelector('select[aria-label="显示模式"]')) await click(container.querySelector('[data-map-display-trigger]')!)
+    await chooseDisplayMode('point')
+    expect(mapWrapper().dataset.placemarkMode).toBe('point')
+    expect(floating.update.mock.calls.at(-1)![1].visible).toBe(false)
+    expect(floating.getButton('a')).toBe(button); expect(button.hidden).toBe(true)
+    await chooseDisplayMode('marker')
+    expect(state.floating).toEqual([floating])
+    expect(floating.getButton('a')).toBe(button); expect(button.hidden).toBe(false)
+    expect(floating.update.mock.calls.at(-1)![0]).toBe(floatingPoints)
+    await click(container.querySelector('[data-track-view="map"]')!)
+    expect(mapWrapper().dataset.placemarkMode).toBe('point')
+    expect(container.querySelector('select[aria-label="显示模式"]')).toBeNull()
+    expect(floating.update.mock.calls.at(-1)![1].visible).toBe(false)
+    expect(state.maps).toHaveLength(1); expect(state.maps[0]).toBe(native); expect(native.remove).not.toHaveBeenCalled()
+    expect(state.markers).toHaveLength(coordinateMarkers.length); coordinateMarkers.forEach((marker, index) => expect(state.markers[index]).toBe(marker))
+    expect(coordinateMarkers.map(marker => marker.coordinates)).toEqual(PLACEMARKS.map(point => point.coordinates))
+    coordinateMarkers.forEach((marker, index) => {
+      expect(marker.setLngLat).toHaveBeenCalledTimes(coordinateCalls[index]); expect(marker.remove).not.toHaveBeenCalled()
+    })
+    // Selecting the floating label can ease the camera; switching its style does not refit the route.
+    expect(native.fitBounds).toHaveBeenCalledTimes(fitCount)
+    expect(moved).not.toHaveBeenCalled(); expect(closed).toHaveBeenCalledOnce()
+    expect(JSON.stringify({points: POINTS, placemarks: PLACEMARKS})).toBe(source)
+    await act(async () => root!.unmount()); root = null
+    expect(floating.dispose).toHaveBeenCalledOnce(); expect(button.isConnected).toBe(false)
+    expect(native.remove).toHaveBeenCalledOnce()
+    coordinateMarkers.forEach(marker => expect(marker.remove).toHaveBeenCalledOnce())
+  })
+
+  it('starts with native point and sandbox marker defaults and retains each view choice independently', async () => {
+    state.sampler.mockResolvedValue({terrain: {}, texture: null, textureUnavailable: false})
+    await render()
+    const native = state.maps[0], coordinateMarkers = [...state.markers]
+    expect(readMapSettings()).toMatchObject({terrainPlacemarkMode: 'point', sandboxPlacemarkMode: 'marker'})
+    expect(mapWrapper().dataset.placemarkMode).toBe('point')
+    await click(container.querySelector('[data-track-view="terrain"]')!)
+    await click(container.querySelector('[data-map-display-trigger]')!)
+    expect(displayModeInput().value).toBe('point')
+    await chooseDisplayMode('marker')
+    const floating = state.floating[0]
+    await click(container.querySelector('[data-track-view="sandbox"]')!)
+    expect(mapWrapper().dataset.placemarkMode).toBe('marker')
+    expect(displayModeInput().value).toBe('marker')
+    const renderer = state.renderers[0]
+    expect(renderer.updatePlacemarks.mock.calls.at(-1)![1]).toMatchObject({mode: 'marker'})
+    expect(floating.update.mock.calls.at(-1)![1].visible).toBe(false)
+    await chooseDisplayMode('point')
+    expect(mapWrapper().dataset.placemarkMode).toBe('point')
+    expect(renderer.updatePlacemarks.mock.calls.at(-1)![1]).toMatchObject({mode: 'point', pointSize: 24, pointColor: '#c83532', groupColor: '#2563eb', pointRadius: 50})
+    expect(readMapSettings()).toMatchObject({terrainPlacemarkMode: 'marker', sandboxPlacemarkMode: 'point'})
+    await click(container.querySelector('[data-track-view="map"]')!)
+    expect(mapWrapper().dataset.placemarkMode).toBe('point')
+    expect(container.querySelector('select[aria-label="显示模式"]')).toBeNull()
+    await click(container.querySelector('[data-track-view="terrain"]')!)
+    expect(displayModeInput().value).toBe('marker'); expect(mapWrapper().dataset.placemarkMode).toBe('marker')
+    expect(state.floating).toEqual([floating]); expect(floating.update.mock.calls.at(-1)![1].visible).toBe(true)
+    expect(state.maps).toHaveLength(1); expect(state.maps[0]).toBe(native); expect(state.markers).toHaveLength(coordinateMarkers.length); coordinateMarkers.forEach((marker, index) => expect(state.markers[index]).toBe(marker))
+    expect(coordinateMarkers.map(marker => marker.coordinates)).toEqual(PLACEMARKS.map(point => point.coordinates))
+    expect(moved).not.toHaveBeenCalled(); expect(selectedFromMap).not.toHaveBeenCalled()
+  })
+
+  it.each([false, true])('updates point and group styling immediately without changing source or edit coordinates, fallback=%s', async noWebGL => {
+    state.noWebGL = noWebGL
+    const source = JSON.stringify({points: POINTS, placemarks: PLACEMARKS, group: GROUP})
+    await render({editable: true, initialGroups: [GROUP], expandedPlacemarkGroups: new Set([GROUP.id])})
+    const wrapper = mapWrapper(), point = marker('a'), group = groupMarker(), native = state.maps[0], coordinateMarkers = [...state.markers]
+    const coordinateCalls = coordinateMarkers.map(marker => marker.setLngLat.mock.calls.length)
+    const outline = noWebGL ? outlineRect() : null
+    const route = outline?.querySelector('polyline')!, routePoints = route?.getAttribute('points')
+    const badge = noWebGL ? point.querySelector<SVGRectElement>('[data-point-badge]')! : null
+    const groupBadge = noWebGL ? group.querySelector<SVGRectElement>('[data-point-badge]')! : null
+    const originalAnchor = noWebGL ? [point.querySelector('circle')!.getAttribute('cx'), point.querySelector('circle')!.getAttribute('cy')] : null
+    if (noWebGL) {expect(group.querySelectorAll('rect')).toHaveLength(1); expect(groupBadge?.getAttribute('rx')).toBe('12'); expect(groupBadge?.getAttribute('ry')).toBe('12')}
+    await click(container.querySelector('[data-map-display-trigger]')!)
+    await changePointStyle('点位大小', '40'); await changePointStyle('点位圆角', '10')
+    await changePointStyle('点位颜色', '#123456'); await changePointStyle('分组颜色', '#654321')
+    expect(mapWrapper()).toBe(wrapper)
+    expect(wrapper.style.getPropertyValue('--trk-point-size')).toBe('40px')
+    expect(wrapper.style.getPropertyValue('--trk-point-color')).toBe('#123456')
+    expect(wrapper.style.getPropertyValue('--trk-group-color')).toBe('#654321')
+    expect(wrapper.style.getPropertyValue('--trk-point-radius')).toBe('10%')
+    expect(readMapSettings()).toMatchObject({placemarkPointSize: 40, placemarkPointColor: '#123456', placemarkGroupColor: '#654321', placemarkPointRadius: 10})
+    expect(marker('a')).toBe(point); expect(groupMarker()).toBe(group)
+    if (noWebGL) {
+      expect(point.querySelector('[data-point-badge]')).toBe(badge); expect(group.querySelector('[data-point-badge]')).toBe(groupBadge)
+      expect([point.querySelector('circle')!.getAttribute('cx'), point.querySelector('circle')!.getAttribute('cy')]).toEqual(originalAnchor)
+      for (const rectangle of [badge!, groupBadge!]) {
+        expect(rectangle.getAttribute('width')).toBe('40'); expect(rectangle.getAttribute('height')).toBe('40'); expect(rectangle.getAttribute('rx')).toBe('4')
+      }
+      expect(Number(badge!.getAttribute('x'))).toBe(Number(originalAnchor![0]) - 20)
+      expect(Number(badge!.getAttribute('y'))).toBe(Number(originalAnchor![1]) - 20)
+      expect(badge!.getAttribute('fill')).toBe('#123456'); expect(groupBadge!.getAttribute('fill')).toBe('#654321')
+      expect(route.getAttribute('points')).toBe(routePoints)
+    } else {
+      expect(state.maps).toHaveLength(1); expect(state.maps[0]).toBe(native); expect(native.remove).not.toHaveBeenCalled()
+      expect(state.markers).toHaveLength(coordinateMarkers.length); coordinateMarkers.forEach((marker, index) => expect(state.markers[index]).toBe(marker))
+      expect(coordinateMarkers.map(marker => marker.coordinates)).toEqual([GROUP.coordinates, ...PLACEMARKS.map(point => point.coordinates)])
+      coordinateMarkers.forEach((marker, index) => {expect(marker.setLngLat).toHaveBeenCalledTimes(coordinateCalls[index]); expect(marker.remove).not.toHaveBeenCalled()})
+    }
+    for (const radius of [0, 50]) {
+      await changePointStyle('点位圆角', String(radius))
+      expect(wrapper.style.getPropertyValue('--trk-point-radius')).toBe(`${radius}%`)
+      if (noWebGL) {
+        expect(badge!.getAttribute('rx')).toBe(String(40 * radius / 100))
+        expect(groupBadge!.getAttribute('rx')).toBe(String(40 * radius / 100))
+      }
+    }
+    expect(moved).not.toHaveBeenCalled(); expect(selectedFromMap).not.toHaveBeenCalled()
+    expect(JSON.stringify({points: POINTS, placemarks: PLACEMARKS, group: GROUP})).toBe(source)
+    await act(async () => point.dispatchEvent(new KeyboardEvent('keydown', {key: 'ArrowRight', altKey: true, bubbles: true, cancelable: true})))
+    expect(moved).toHaveBeenCalledTimes(1); expect(moved.mock.calls[0][0]).toBe('a')
+    expect(moved.mock.calls[0][1][0]).toBeCloseTo(120 + (noWebGL ? .1 * 20 / 840 : .02))
+    expect(moved.mock.calls[0][1][1]).toBeCloseTo(30)
+    expect(PLACEMARKS[0].coordinates).toEqual([120, 30]); expect(GROUP.coordinates).toEqual([120.03, 30.04])
+    if (noWebGL) expect(route.getAttribute('points')).toBe(routePoints)
+  })
+})
+
+
+describe('point names and group count display', () => {
+  it.each([false, true])('toggles name and group count without recreating markers or editing coordinates, fallback=%s', async noWebGL => {
+    state.noWebGL = noWebGL
+    const original = JSON.stringify({points: POINTS, placemarks: PLACEMARKS, group: GROUP})
+    await render({editable: true, initialGroups: [GROUP], expandedPlacemarkGroups: new Set([GROUP.id])})
+    const point = marker('a'), group = groupMarker(), coordinateMarkers = [...state.markers]
+    const coordinates = coordinateMarkers.map(marker => marker.coordinates)
+    const nativeName = () => point.querySelector<HTMLElement>('.trk-map-placemark-name')
+    const nativeCount = () => group.querySelector<HTMLElement>('.trk-map-placemark-count')
+    const svgName = () => point.querySelector('[data-point-name]')
+    const svgCount = () => group.querySelector('[data-point-count]')
+    expect(readMapSettings()).toMatchObject({placemarkPointShowCount: true, placemarkPointShowName: false})
+    if (noWebGL) {expect(svgName()).toBeNull(); expect(svgCount()).not.toBeNull()}
+    else {expect(nativeName()?.hidden).toBe(true); expect(nativeCount()?.hidden).toBe(false)}
+    await click(container.querySelector('[data-map-display-trigger]')!)
+    await click(container.querySelector('input[aria-label="显示名称"]')!)
+    await click(container.querySelector('input[aria-label="显示组内点位数量"]')!)
+    expect(readMapSettings()).toMatchObject({placemarkPointShowCount: false, placemarkPointShowName: true})
+    expect(marker('a')).toBe(point); expect(groupMarker()).toBe(group)
+    if (noWebGL) {
+      expect(svgName()?.textContent).toBe(PLACEMARKS[0].name)
+      expect(group.querySelector('[data-point-name]')?.textContent).toBe(GROUP.name)
+      expect(svgCount()).toBeNull()
+    } else {
+      expect(nativeName()?.hidden).toBe(false); expect(nativeName()?.textContent).toBe(PLACEMARKS[0].name)
+      expect(group.querySelector<HTMLElement>('.trk-map-placemark-name')?.textContent).toBe(GROUP.name)
+      expect(nativeCount()?.hidden).toBe(true)
+      expect(state.markers).toEqual(coordinateMarkers); expect(state.markers.map(marker => marker.coordinates)).toEqual(coordinates)
+    }
+    expect(group.getAttribute('aria-label')).toContain('2 个子点')
+    expect(JSON.stringify({points: POINTS, placemarks: PLACEMARKS, group: GROUP})).toBe(original)
+    expect(moved).not.toHaveBeenCalled(); expect(selectedFromMap).not.toHaveBeenCalled()
+    await click(container.querySelector('input[aria-label="显示名称"]')!)
+    await click(container.querySelector('input[aria-label="显示组内点位数量"]')!)
+    if (noWebGL) {expect(svgName()).toBeNull(); expect(svgCount()).not.toBeNull()}
+    else {expect(nativeName()?.hidden).toBe(true); expect(nativeCount()?.hidden).toBe(false)}
+    expect(marker('a')).toBe(point); expect(groupMarker()).toBe(group)
+  })
+
+  it('forwards names and count preferences through both live and deferred sandbox builds', async () => {
+    writeMapSettings({...DEFAULT_MAP_SETTINGS, sandboxPlacemarkMode: 'point', placemarkPointShowCount: false, placemarkPointShowName: true})
+    let complete!: (value: unknown) => void
+    state.sampler.mockImplementationOnce(() => new Promise(resolve => {complete = resolve}))
+    await render({initialGroups: [GROUP], expandedPlacemarkGroups: new Set([GROUP.id])})
+    await click(container.querySelector('[data-track-view="sandbox"]')!)
+    await act(async () => {complete({terrain: {}, texture: null, textureUnavailable: false})})
+    const renderer = state.renderers[0]
+    expect(renderer.updatePlacemarks.mock.calls.at(-1)![1]).toMatchObject({mode: 'point', pointShowCount: false, pointShowName: true})
+    await click(container.querySelector('[data-map-display-trigger]')!)
+    await click(container.querySelector('input[aria-label="显示组内点位数量"]')!)
+    await click(container.querySelector('input[aria-label="显示名称"]')!)
+    expect(renderer.updatePlacemarks.mock.calls.at(-1)![1]).toMatchObject({pointShowCount: true, pointShowName: false})
+    expect(renderer.updatePlacemarks.mock.calls.at(-1)![0].find((point: SandboxPlacemark) => point.id === GROUP.id)).toMatchObject({title: GROUP.name, groupCount: 2, coordinates: GROUP.coordinates})
+    expect(moved).not.toHaveBeenCalled()
+  })
+})
 
 describe('expanded map groups', () => {
   it.each([false, true])('shows children at their original positions and removes them on collapse with noWebGL=%s', async noWebGL => {
@@ -248,7 +546,7 @@ describe('expanded map groups', () => {
     expectDetails('b')
     expect(marker('b').getAttribute('aria-pressed')).toBe('true')
     expect(groupMarker().getAttribute('aria-pressed')).toBe('false')
-    if (!noWebGL) expect(latestPopup().coordinates).toEqual(PLACEMARKS[1].coordinates)
+    expectFixedPanel(); expect(details().textContent).toContain('120.100000')
     await click(details().querySelector('[aria-label="编辑点位"]')!)
     expect(edited).toHaveBeenCalledExactlyOnceWith('b')
     if (noWebGL) outlineRect()
@@ -259,12 +557,12 @@ describe('expanded map groups', () => {
     expect(moved.mock.calls[0][1][1]).toBeCloseTo(PLACEMARKS[1].coordinates[1])
     expectDetails('b')
     expect(document.activeElement).toBe(marker('b'))
-    if (!noWebGL) expect(latestPopup().coordinates).toEqual(moved.mock.calls[0][1])
+    expectFixedPanel(); expect(details().textContent).toContain(moved.mock.calls[0][1][0].toFixed(6))
     await render(options)
     expect(marker('b')).toBeNull()
     expect(groupMarker().getAttribute('aria-pressed')).toBe('true')
     expect(details().querySelector('[aria-label="编辑标记组"]')).not.toBeNull()
-    if (!noWebGL) expect(latestPopup().coordinates).toEqual(GROUP.coordinates)
+    expectFixedPanel(); expect(details().getAttribute('aria-label')).toBe(`组详情：${GROUP.name}`)
     expect(closed).not.toHaveBeenCalled()
   })
 
@@ -344,7 +642,7 @@ describe('group map markers and photo carousel',()=>{
     await render({initialGroups:[GROUP]});await click(groupMarker())
     await click(details().querySelector('[aria-label="下一张组图片"]')!)
     if(sameCoverChild)await click(details().querySelector('[aria-label="下一张组图片"]')!)
-    expect(selection()).toBe(sameCoverChild?'a':'b')
+    expect(selection()).toBe(GROUP.id)
     expect(currentGroupImage()).toBe(sameCoverChild?PLACEMARKS[0].images[0]:PLACEMARKS[1].images[0])
     await click(groupMarker())
     expect(selection()).toBe(GROUP.id)
@@ -353,7 +651,7 @@ describe('group map markers and photo carousel',()=>{
     const profileSelected=selection()===GROUP.id?GROUP.cover!.pointId:selection()
     expect(details().querySelector('[data-group-member-id]')?.getAttribute('data-group-member-id')).toBe(profileSelected)
     await click(details().querySelector('[aria-label="下一张组图片"]')!)
-    expect(selection()).toBe('b');expect(currentGroupImage()).toBe(PLACEMARKS[1].images[0])
+    expect(selection()).toBe(GROUP.id);expect(currentGroupImage()).toBe(PLACEMARKS[1].images[0])
   })
 
   it.each([false,true])('returns to cover when the parent selects the group row after a child selection with noWebGL=%s',async noWebGL=>{
@@ -401,7 +699,7 @@ describe('group map markers and photo carousel',()=>{
     expect(currentGroupImage()).toBe(PLACEMARKS[1].images[0])
     await click(details().querySelector('[aria-label="下一张组图片"]')!)
     expect(currentGroupImage()).toBe(PLACEMARKS[0].images[0])
-    expect(selectedFromMap).toHaveBeenLastCalledWith('a')
+    expect(selectedFromMap).not.toHaveBeenCalled()
   })
 
   it.each([
@@ -411,8 +709,8 @@ describe('group map markers and photo carousel',()=>{
     state.noWebGL=noWebGL
     await render({initialGroups:[GROUP]});await click(groupMarker())
     await click(details().querySelector('[aria-label="下一张组图片"]')!)
-    expect(selection()).toBe('b');expect(currentGroupImage()).toBe(PLACEMARKS[1].images[0])
-    if(method==='map')await act(async()=>latestPopup().remove())
+    expect(selection()).toBe(GROUP.id);expect(currentGroupImage()).toBe(PLACEMARKS[1].images[0])
+    if(method==='map')await click(container.querySelector('.trk-map')!)
     else if(method==='Escape')await act(async()=>details().querySelector('[aria-label="关闭点位详情"]')!.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true})))
     else await click(details().querySelector('[aria-label="关闭点位详情"]')!)
     expect(selection()).toBe('none');expect(container.querySelector('[role="dialog"]')).toBeNull()
@@ -440,7 +738,7 @@ describe('group map markers and photo carousel',()=>{
     expect(details().textContent).toContain('1 / 3')
   })
 
-  it('uses the cover after the parent clears and reopens group selection without a popup close callback',async()=>{
+  it('uses the cover after the parent clears and reopens group selection without a user close callback',async()=>{
     const renderSelection=async(selectedPlacemark:string|null)=>act(async()=>root!.render(createElement(MapView,{
       points:POINTS,name:'外部选择',basemap:'none',onBasemap:()=>{},placemarks:PLACEMARKS,placemarkGroups:[GROUP],selectedPlacemark,
       onSelectPlacemark:selectedFromMap,onClosePlacemark:closed,
@@ -467,8 +765,8 @@ describe('group map markers and photo carousel',()=>{
     expect(details().textContent).toContain(PLACEMARKS[1].description)
     expect(details().textContent).toContain('120.100000')
     expect(details().textContent).not.toContain('120.030000')
-    if(!noWebGL)expect(latestPopup().coordinates).toEqual(GROUP.coordinates)
-    else expect(groupMarker().querySelector('rect')?.getAttribute('fill')).toBe('#a9c4ff')
+    expectFixedPanel()
+    if(noWebGL) {expect(groupMarker().querySelectorAll('rect')).toHaveLength(1); expect(groupMarker().querySelector('[data-point-badge]')?.getAttribute('fill')).toBe('#2563eb')}
   })
 
   it('starts at cover, wraps across children, and retains same-child photo and navigation focus after rebuilding',async()=>{
@@ -476,12 +774,12 @@ describe('group map markers and photo carousel',()=>{
     expect(currentGroupImage()).toBe(PLACEMARKS[0].images[1])
     expect(details().textContent).toContain('2 / 3')
     await click(details().querySelector('[aria-label="下一张组图片"]')!)
-    expect(selection()).toBe('b');expect(currentGroupImage()).toBe(PLACEMARKS[1].images[0])
+    expect(selection()).toBe(GROUP.id);expect(currentGroupImage()).toBe(PLACEMARKS[1].images[0])
     expect(document.activeElement?.getAttribute('aria-label')).toBe('下一张组图片')
     await act(async()=>details().dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowRight',bubbles:true,cancelable:true})))
-    expect(selection()).toBe('a');expect(currentGroupImage()).toBe(PLACEMARKS[0].images[0])
+    expect(selection()).toBe(GROUP.id);expect(currentGroupImage()).toBe(PLACEMARKS[0].images[0])
     await click(details().querySelector('[aria-label="下一张组图片"]')!)
-    expect(selection()).toBe('a');expect(currentGroupImage()).toBe(PLACEMARKS[0].images[1])
+    expect(selection()).toBe(GROUP.id);expect(currentGroupImage()).toBe(PLACEMARKS[0].images[1])
     await render({initialGroups:[GROUP],disabled:true})
     expect(currentGroupImage()).toBe(PLACEMARKS[0].images[1])
     await click(groupMarker())
@@ -489,7 +787,7 @@ describe('group map markers and photo carousel',()=>{
     expect(closed).not.toHaveBeenCalled()
   })
 
-  it('keeps the large viewer open while changing children and same-child images and syncs the popup',async()=>{
+  it('keeps the large viewer open while changing children and same-child images and syncs the fixed card',async()=>{
     await render({initialGroups:[GROUP]});await click(groupMarker())
     await click(details().querySelector('.trk-placemark-details-view')!)
     const viewer=container.querySelector<HTMLDialogElement>('dialog')!
@@ -497,9 +795,9 @@ describe('group map markers and photo carousel',()=>{
     await click(viewer.querySelector('[aria-label="下一张大图"]')!)
     expect(container.querySelector('dialog')).toBe(viewer);expect(viewer.open).toBe(true)
     expect(viewer.querySelector('img')?.src).toBe(PLACEMARKS[1].images[0])
-    expect(selection()).toBe('b');expect(currentGroupImage()).toBe(PLACEMARKS[1].images[0])
+    expect(selection()).toBe(GROUP.id);expect(currentGroupImage()).toBe(PLACEMARKS[1].images[0])
     await act(async()=>viewer.dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowRight',bubbles:true})))
-    expect(selection()).toBe('a');expect(viewer.querySelector('img')?.src).toBe(PLACEMARKS[0].images[0])
+    expect(selection()).toBe(GROUP.id);expect(viewer.querySelector('img')?.src).toBe(PLACEMARKS[0].images[0])
     await click(viewer.querySelector('[aria-label="下一张大图"]')!)
     expect(viewer.querySelector('img')?.src).toBe(PLACEMARKS[0].images[1])
     expect(currentGroupImage()).toBe(PLACEMARKS[0].images[1])
@@ -516,10 +814,11 @@ describe('group map markers and photo carousel',()=>{
     expect(details().textContent).toContain('101')
     expect([...details().querySelectorAll('.trk-placemark-details-type')].map(badge=>badge.textContent)).toEqual(['营地','风景'])
     await click(details().querySelector('[aria-label="下一张组图片"]')!)
-    expect(selection()).toBe('b');expect(currentGroupImage()).toBe(PLACEMARKS[1].images[0])
+    expect(selection()).toBe('a');expect(currentGroupImage()).toBe(PLACEMARKS[1].images[0])
+    expect(selectedFromMap).not.toHaveBeenCalled()
   })
 
-  it.each([false,true])('omits a fully hidden group and its popup with noWebGL=%s',async noWebGL=>{
+  it.each([false,true])('omits a fully hidden group and its details with noWebGL=%s',async noWebGL=>{
     state.noWebGL=noWebGL
     await render({initialGroups:[GROUP],initialSelection:GROUP.id,initialLocations:PLACEMARKS.map(point=>({...point,hidden:true}))})
     expect(groupMarker()).toBeNull();expect(container.querySelector('[role="dialog"]')).toBeNull()
@@ -546,7 +845,7 @@ describe('group map markers and photo carousel',()=>{
     await act(async()=>dragged.emit('dragend'))
     expect(moved).toHaveBeenCalledExactlyOnceWith(GROUP.id,[120.07,30.08])
     expect(dragged.setLngLat).toHaveBeenCalledWith(GROUP.coordinates)
-    expect(latestPopup().coordinates).toEqual([120.07,30.08])
+    expectFixedPanel(); expect(groupMarker().getAttribute('aria-pressed')).toBe('true')
     expect(details().textContent).toContain('120.000000')
     expect(PLACEMARKS[0].coordinates).toEqual([120,30])
   })
@@ -569,10 +868,228 @@ describe('group map markers and photo carousel',()=>{
   })
 })
 
+describe('fixed canvas details and gallery selection boundaries', () => {
+  it.each([false, true])('keeps a real Overview group collapsed through thumbnail and large-photo navigation, noWebGL=%s', async noWebGL => {
+    state.noWebGL = noWebGL
+    const original = JSON.stringify(state.overview), pointReference = state.overview.points, groupReference = state.overview.groups
+    const track = {id: 'overview-gallery', format: 'kml', name: '真实父级轮播', coordinates: POINTS,
+      segmentStarts: [0], metrics: {elevationMax: 130}, placemarks: PLACEMARKS} as TrackRecord
+    await act(async () => root!.render(createElement(TrackOverview, {track, basemap: 'none', onBasemap: vi.fn()})))
+    await click(mapWrapper().querySelector(`[data-placemark-id="${GROUP.id}"]`)!)
+    const host = expectFixedPanel(), children = container.querySelector<HTMLElement>(`[id="children-${GROUP.id}"]`)!
+    const groupRow = container.querySelector<HTMLButtonElement>('.trk-overview-group-point')!
+    const imageSource = (rendered: string | undefined, size: 'thumbnail' | 'original') => {
+      expect(rendered).toBeDefined()
+      const asset = new URL(rendered!, window.location.href), source = asset.searchParams.get('source')
+      expect(asset.searchParams.get('id')).toBe(track.id); expect(asset.searchParams.get('size')).toBe(size)
+      expect(source).not.toBeNull()
+      const expected = size === 'thumbnail' ? placemarkPhotoThumbnailUrl(track.id, source!) : placemarkPhotoOriginalUrl(track.id, source!)
+      expect(asset.href).toBe(new URL(expected, window.location.href).href)
+      return source
+    }
+    const assertCollapsed = () => {
+      expect(children.hidden).toBe(true); expect(groupRow.getAttribute('aria-expanded')).toBe('false')
+      expect(groupRow.getAttribute('aria-pressed')).toBe('true')
+      expect(mapWrapper().querySelectorAll('[data-placemark-id]')).toHaveLength(1)
+      expect(mapWrapper().querySelector('[data-placemark-id="a"]')).toBeNull()
+      expect(detailsHost()).toBe(host); expect(detailsHost().querySelector('.trk-placemark-group-details')).not.toBeNull()
+    }
+    assertCollapsed(); expect(imageSource(currentGroupImage(), 'thumbnail')).toBe(GROUP.cover!.imageUrl)
+    for (const expected of [PLACEMARKS[1].images[0], PLACEMARKS[0].images[0], PLACEMARKS[0].images[1]]) {
+      await click(details().querySelector('[aria-label="下一张组图片"]')!)
+      expect(imageSource(currentGroupImage(), 'thumbnail')).toBe(expected); assertCollapsed()
+    }
+    await click(details().querySelector('.trk-placemark-details-view')!)
+    const viewer = container.querySelector<HTMLDialogElement>('dialog')!
+    for (const expected of [PLACEMARKS[1].images[0], PLACEMARKS[0].images[0]]) {
+      await click(viewer.querySelector('[aria-label="下一张大图"]')!)
+      expect(container.querySelector('dialog')).toBe(viewer); expect(viewer.open).toBe(true)
+      expect(imageSource(viewer.querySelector('img')?.src, 'original')).toBe(expected); assertCollapsed()
+    }
+    await click(viewer.querySelector('[aria-label="关闭大图"]')!)
+    expect(imageSource(currentGroupImage(), 'thumbnail')).toBe(PLACEMARKS[0].images[0]); assertCollapsed()
+    expect(document.activeElement).toBe(details().querySelector('.trk-placemark-details-view'))
+    expect(state.overview.points).toBe(pointReference); expect(state.overview.groups).toBe(groupReference)
+    expect(JSON.stringify(state.overview)).toBe(original)
+  })
+
+  it.each([
+    {view: 'map', mode: 'point', noWebGL: false}, {view: 'map', mode: 'point', noWebGL: true},
+    {view: 'terrain', mode: 'point', noWebGL: false}, {view: 'terrain', mode: 'marker', noWebGL: false},
+    {view: 'sandbox', mode: 'point', noWebGL: false}, {view: 'sandbox', mode: 'marker', noWebGL: false},
+  ] as const)('uses the same centered host and preserves group selection in $view/$mode, noWebGL=$noWebGL', async ({view, mode, noWebGL}) => {
+    state.noWebGL = noWebGL; state.sampler.mockResolvedValue({terrain: {}, texture: null, textureUnavailable: false})
+    writeMapSettings({...DEFAULT_MAP_SETTINGS, terrainPlacemarkMode: mode, sandboxPlacemarkMode: mode})
+    await render({initialGroups: [GROUP]})
+    const host = detailsHost(), original = JSON.stringify({points: POINTS, placemarks: PLACEMARKS, group: GROUP})
+    if (view !== 'map') await click(container.querySelector(`[data-track-view="${view}"]`)!)
+    const activeMarker = () => view === 'sandbox' ? container.querySelector<HTMLButtonElement>(`[data-sandbox-placemark="${GROUP.id}"]`)!
+      : view === 'terrain' && mode === 'marker' ? state.floating[0].getButton(GROUP.id)! : groupMarker()
+    await click(activeMarker()); expectFixedPanel(); expect(detailsHost()).toBe(host)
+    expect(currentGroupImage()).toBe(GROUP.cover!.imageUrl); expect(selection()).toBe(GROUP.id)
+    const fitCalls = state.maps[0]?.fitBounds.mock.calls.length, callbackCount = selectedFromMap.mock.calls.length
+    await click(details().querySelector('[aria-label="下一张组图片"]')!)
+    expect(currentGroupImage()).toBe(PLACEMARKS[1].images[0]); expect(selection()).toBe(GROUP.id)
+    await act(async () => details().dispatchEvent(new KeyboardEvent('keydown', {key: 'ArrowRight', bubbles: true, cancelable: true})))
+    expect(currentGroupImage()).toBe(PLACEMARKS[0].images[0]); expect(selection()).toBe(GROUP.id)
+    expect(selectedFromMap).toHaveBeenCalledTimes(callbackCount)
+    await click(details().querySelector('.trk-placemark-details-view')!)
+    const viewer = container.querySelector<HTMLDialogElement>('dialog')!
+    await click(viewer.querySelector('[aria-label="下一张大图"]')!)
+    expect(currentGroupImage()).toBe(GROUP.cover!.imageUrl); expect(container.querySelector('dialog')).toBe(viewer)
+    expect(selection()).toBe(GROUP.id); expect(selectedFromMap).toHaveBeenCalledTimes(callbackCount)
+    await click(viewer.querySelector('[aria-label="关闭大图"]')!)
+    expectFixedPanel(); expect(detailsHost()).toBe(host)
+    expect(document.activeElement).toBe(details().querySelector('.trk-placemark-details-view'))
+    await click(details().querySelector('[aria-label="下一张组图片"]')!)
+    expect(currentGroupImage()).toBe(PLACEMARKS[1].images[0]); expect(selectedFromMap).toHaveBeenCalledTimes(callbackCount)
+    await click(activeMarker())
+    expect(selection()).toBe(GROUP.id); expect(currentGroupImage()).toBe(GROUP.cover!.imageUrl)
+    expect(selectedFromMap).toHaveBeenCalledTimes(callbackCount + 1)
+    await click(details().querySelector('[aria-label="关闭点位详情"]')!)
+    expect(closed).toHaveBeenCalledOnce(); expect(selection()).toBe('none'); expect(document.activeElement).toBe(activeMarker())
+    expect(detailsHost()).toBe(host); expect(host.children).toHaveLength(0)
+    if (state.maps[0]) {expect(state.maps[0].fitBounds).toHaveBeenCalledTimes(fitCalls!); expect(state.maps[0].easeTo).not.toHaveBeenCalled()}
+    expect(JSON.stringify({points: POINTS, placemarks: PLACEMARKS, group: GROUP})).toBe(original)
+  })
+
+  it.each([false, true])('honors external child selection, lets its gallery cross children locally, and relocates only on a later external child selection, noWebGL=%s', async noWebGL => {
+    state.noWebGL = noWebGL
+    const renderSelection = (selectedPlacemark: string) => act(async () => root!.render(createElement(MapView, {
+      points: POINTS, name: '外部子点选择', basemap: 'none', onBasemap: vi.fn(), placemarks: PLACEMARKS,
+      placemarkGroups: [GROUP], selectedPlacemark, onSelectPlacemark: selectedFromMap, onClosePlacemark: closed,
+    })))
+    await renderSelection('a'); const host = expectFixedPanel()
+    expect(currentGroupImage()).toBe(PLACEMARKS[0].images[0])
+    await click(details().querySelector('[aria-label="下一张组图片"]')!)
+    await click(details().querySelector('[aria-label="下一张组图片"]')!)
+    expect(currentGroupImage()).toBe(PLACEMARKS[1].images[0]); expect(selectedFromMap).not.toHaveBeenCalled()
+    await renderSelection('a'); expect(currentGroupImage()).toBe(PLACEMARKS[1].images[0])
+    await renderSelection('b'); expect(currentGroupImage()).toBe(PLACEMARKS[1].images[0])
+    await click(details().querySelector('[aria-label="下一张组图片"]')!)
+    expect(currentGroupImage()).toBe(PLACEMARKS[0].images[0])
+    await renderSelection('a'); expect(currentGroupImage()).toBe(PLACEMARKS[0].images[0])
+    expect(detailsHost()).toBe(host); expect(selectedFromMap).not.toHaveBeenCalled(); expect(closed).not.toHaveBeenCalled()
+  })
+
+  it.each([false, true])('clears a remembered group photo for an externally selected child without photos, and keeps that child metadata through unrelated renders, noWebGL=%s', async noWebGL => {
+    state.noWebGL = noWebGL
+    const empty: TrackPlacemark = {id: 'no-photo', name: '无图观景点', coordinates: [120.06, 30.05],
+      description: '这个子点没有照片，仍应保留自己的信息', images: [], elevation: 188}
+    const locations = [...PLACEMARKS, empty], group = {...GROUP, memberIds: [...GROUP.memberIds, empty.id]}
+    const original = JSON.stringify({locations, group})
+    const renderSelection = (selectedPlacemark: string, placemarkEditingDisabled = false) => act(async () => root!.render(createElement(MapView, {
+      points: POINTS, name: '无图子点外部选择', basemap: 'none', onBasemap: vi.fn(), placemarks: locations, placemarkGroups: [group],
+      selectedPlacemark, placemarkEditingDisabled, onSelectPlacemark: selectedFromMap, onClosePlacemark: closed,
+    })))
+    await renderSelection(group.id); await click(details().querySelector('[aria-label="下一张组图片"]')!)
+    expect(currentGroupImage()).toBe(PLACEMARKS[1].images[0])
+    await renderSelection(empty.id); const host = expectFixedPanel()
+    const assertEmptyChild = () => {
+      expect(currentGroupImage()).toBeUndefined(); expect(details().querySelector('[data-group-member-id]')?.getAttribute('data-group-member-id')).toBe(empty.id)
+      expect(details().textContent).toContain(empty.name); expect(details().textContent).toContain(empty.description)
+      expect(details().textContent).toContain('188'); expect(details().textContent).not.toContain(PLACEMARKS[1].description)
+    }
+    assertEmptyChild(); await renderSelection(empty.id, true); assertEmptyChild()
+    expect(detailsHost()).toBe(host); expect(selectedFromMap).not.toHaveBeenCalled(); expect(closed).not.toHaveBeenCalled()
+    await click(details().querySelector('[aria-label="下一张组图片"]')!)
+    expect(currentGroupImage()).toBe(PLACEMARKS[0].images[0]); expect(selectedFromMap).not.toHaveBeenCalled()
+    await renderSelection(empty.id, false)
+    expect(currentGroupImage()).toBe(PLACEMARKS[0].images[0]); expect(detailsHost()).toBe(host)
+    expect(JSON.stringify({locations, group})).toBe(original)
+  })
+
+  it.each(['drag', 'keyboard'] as const)('keeps a non-cover SVG group slide while moving its position with %s', async method => {
+    state.noWebGL = true
+    const original = JSON.stringify({points: POINTS, placemarks: PLACEMARKS, group: GROUP})
+    await render({initialGroups: [GROUP], editable: true}); await click(groupMarker())
+    await click(details().querySelector('[aria-label="下一张组图片"]')!)
+    expect(currentGroupImage()).toBe(PLACEMARKS[1].images[0]); expect(selection()).toBe(GROUP.id)
+    const host = expectFixedPanel(), svg = outlineRect(), route = svg.querySelector('polyline')!.getAttribute('points')
+    if (method === 'drag') {
+      await pointer(groupMarker(), 'pointerdown', 332, 396)
+      await pointer(svg, 'pointermove', 500, 350); await pointer(svg, 'pointerup', 500, 350)
+      expect(moved.mock.calls[0][1][0]).toBeCloseTo(120.05); expect(moved.mock.calls[0][1][1]).toBeCloseTo(30.05)
+    } else {
+      await act(async () => groupMarker().dispatchEvent(new KeyboardEvent('keydown', {key: 'ArrowRight', altKey: true, bubbles: true, cancelable: true})))
+      expect(moved.mock.calls[0][1][0]).toBeCloseTo(GROUP.coordinates[0] + .1 * 20 / 840)
+      expect(document.activeElement).toBe(groupMarker())
+    }
+    expect(moved).toHaveBeenCalledTimes(1); expect(moved.mock.calls[0][0]).toBe(GROUP.id)
+    expect(selection()).toBe(GROUP.id); expect(currentGroupImage()).toBe(PLACEMARKS[1].images[0])
+    expect(details().querySelector('[data-group-member-id]')?.getAttribute('data-group-member-id')).toBe('b')
+    expect(detailsHost()).toBe(host); expectFixedPanel(); expect(closed).not.toHaveBeenCalled()
+    expect(svg.querySelector('polyline')!.getAttribute('points')).toBe(route)
+    expect(JSON.stringify({points: POINTS, placemarks: PLACEMARKS, group: GROUP})).toBe(original)
+  })
+
+  it('isolates card pointer, click, wheel and carousel keyboard events from the map and closes only on the background', async () => {
+    await render({initialGroups: [GROUP]}); await click(groupMarker())
+    const host = expectFixedPanel(), mapEvents = vi.fn(), names = ['pointerdown', 'click', 'dblclick', 'wheel', 'keydown']
+    for (const name of names) document.body.addEventListener(name, mapEvents)
+    const target = details().querySelector('.trk-placemark-details-description')!
+    for (const name of ['pointerdown', 'click', 'dblclick', 'wheel']) await act(async () => target.dispatchEvent(new Event(name, {bubbles: true, cancelable: true})))
+    await act(async () => details().dispatchEvent(new KeyboardEvent('keydown', {key: 'ArrowRight', bubbles: true, cancelable: true})))
+    expect(mapEvents).not.toHaveBeenCalled(); expect(closed).not.toHaveBeenCalled(); expect(selection()).toBe(GROUP.id)
+    expect(detailsHost()).toBe(host); expect(currentGroupImage()).toBe(PLACEMARKS[1].images[0])
+    for (const name of names) document.body.removeEventListener(name, mapEvents)
+    await click(container.querySelector('.trk-map')!)
+    expect(closed).toHaveBeenCalledOnce(); expect(selection()).toBe('none'); expect(document.activeElement).toBe(groupMarker())
+  })
+
+  it.each([false, true])('keeps the current card after a background drag or rotation and closes after a separate background click, noWebGL=%s', async noWebGL => {
+    state.noWebGL = noWebGL
+    await render(); await click(marker('a')); const host = expectFixedPanel()
+    const surface = container.querySelector(noWebGL ? '.trk-outline' : '.trk-map')!
+    await pointer(surface, 'pointerdown', 100, 100)
+    await pointer(surface, 'pointermove', 150, 130)
+    await pointer(surface, 'pointerup', 150, 130)
+    await click(surface)
+    expect(selection()).toBe('a'); expectDetails('a'); expect(detailsHost()).toBe(host); expect(closed).not.toHaveBeenCalled()
+    await pointer(surface, 'pointerdown', 160, 140); await pointer(surface, 'pointerup', 160, 140)
+    await click(surface)
+    expect(selection()).toBe('none'); expect(closed).toHaveBeenCalledOnce(); expect(document.activeElement).toBe(marker('a'))
+  })
+
+  it('adapts its fixed card to canvas resize without moving the map on open, image load or local photo navigation', async () => {
+    const observers: {callback: ResizeObserverCallback; observe: ReturnType<typeof vi.fn>; disconnect: ReturnType<typeof vi.fn>}[] = []
+    vi.stubGlobal('ResizeObserver', class {
+      observe = vi.fn(); unobserve = vi.fn(); disconnect = vi.fn()
+      constructor(public callback: ResizeObserverCallback) {observers.push(this)}
+    })
+    await render({initialGroups: [GROUP]})
+    let width = 640, height = 480
+    for (const canvas of [mapWrapper(), container.querySelector<HTMLElement>('.trk-map')!]) Object.defineProperties(canvas, {
+      clientWidth: {configurable: true, get: () => width}, clientHeight: {configurable: true, get: () => height},
+    })
+    await click(groupMarker()); const host = expectFixedPanel()
+    const fitCalls = state.maps[0].fitBounds.mock.calls.length
+    await act(async () => {
+      for (const image of details().querySelectorAll('img')) image.dispatchEvent(new Event('load'))
+      for (const observer of observers) observer.callback([], observer as unknown as ResizeObserver)
+    })
+    await click(details().querySelector('[aria-label="下一张组图片"]')!)
+    width = 180; height = 190
+    await act(async () => {
+      for (const observer of observers) observer.callback([], observer as unknown as ResizeObserver)
+      window.dispatchEvent(new Event('resize'))
+    })
+    expectFixedPanel(); expect(detailsHost()).toBe(host); expect(currentGroupImage()).toBe(PLACEMARKS[1].images[0])
+    expect(observers.some(observer => observer.observe.mock.calls.some(([element]) => element === mapWrapper() || element === container.querySelector('.trk-map')))).toBe(true)
+    const card = detailsHost().querySelector<HTMLElement>('.trk-placemark-details')!
+    expect(parseFloat(card.style.width)).toBeGreaterThan(0); expect(parseFloat(card.style.width)).toBeLessThanOrEqual(width - 16)
+    expect(parseFloat(details().style.maxHeight)).toBeGreaterThan(0); expect(parseFloat(details().style.maxHeight)).toBeLessThanOrEqual(height - 16)
+    expect(state.maps[0].easeTo).not.toHaveBeenCalled(); expect(state.maps[0].fitBounds).toHaveBeenCalledTimes(fitCalls)
+    await act(async () => root!.unmount()); root = null
+    expect(observers.every(observer => observer.disconnect.mock.calls.length >= 1)).toBe(true)
+    expect(closed).not.toHaveBeenCalled()
+  })
+})
+
 describe('map placemark details with controlled selection', () => {
   it.each(['button','Escape'] as const)('views a linked photo and closes it via %s while preserving the point',async method=>{
     await render();await click(marker('a'))
-    const popup=latestPopup()
+    const host=expectFixedPanel(), contents=details()
     await click(details().querySelector('[aria-label="查看图片 2 大图"]')!)
     const viewer=container.querySelector<HTMLDialogElement>('dialog')!
     expect(viewer.open).toBe(true)
@@ -582,7 +1099,7 @@ describe('map placemark details with controlled selection', () => {
     expect(container.querySelector('dialog')).toBeNull()
     expect(selection()).toBe('a')
     expectDetails('a')
-    expect(popup.remove).not.toHaveBeenCalled()
+    expect(detailsHost()).toBe(host); expect(details()).toBe(contents)
     expect(closed).not.toHaveBeenCalled()
   })
   it('clears an open large photo when switching the selected point',async()=>{
@@ -602,17 +1119,14 @@ describe('map placemark details with controlled selection', () => {
     expect(selection()).toBe('a')
     expectDetails('a')
     expect(marker('a').getAttribute('aria-pressed')).toBe('true')
-    expect(state.maps[0].easeTo).toHaveBeenLastCalledWith(expect.objectContaining({center: PLACEMARKS[0].coordinates, duration: 250}))
-    expect(latestPopup().options).toMatchObject({closeButton: false, closeOnClick: true})
+    expectFixedPanel(); expect(state.markers[0].coordinates).toEqual(PLACEMARKS[0].coordinates)
   })
 
-  it('removes the previous popup without clearing the newly selected point', async () => {
+  it('replaces the fixed card contents without clearing the newly selected point or recreating its host', async () => {
     await render(); await click(marker('a'))
-    const previous = latestPopup()
+    const host = expectFixedPanel(), previous = details()
     await click(marker('b'))
-    expect(previous.off).toHaveBeenCalledWith('close', expect.any(Function))
-    expect(previous.remove).toHaveBeenCalledOnce()
-    expect(previous.contents?.isConnected).toBe(false)
+    expect(previous.isConnected).toBe(false); expect(detailsHost()).toBe(host)
     expect(closed).not.toHaveBeenCalled()
     expect(selection()).toBe('b')
     expectDetails('b')
@@ -620,16 +1134,17 @@ describe('map placemark details with controlled selection', () => {
     expect(marker('a').getAttribute('aria-pressed')).toBe('false')
   })
 
-  it('clears selection on a MapLibre close event so the same marker can reopen', async () => {
+  it('clears selection on a map background click so the same marker can reopen', async () => {
     await render(); await click(marker('a'))
-    await act(async () => latestPopup().remove())
+    const host = expectFixedPanel()
+    await click(container.querySelector('.trk-map')!)
     expect(closed).toHaveBeenCalledOnce()
     expect(selection()).toBe('none')
     expect(container.querySelector('[role="dialog"]')).toBeNull()
     expect(document.activeElement).toBe(marker('a'))
     await click(marker('a'))
     expectDetails('a')
-    expect(state.popups).toHaveLength(2)
+    expectFixedPanel(); expect(detailsHost()).toBe(host)
   })
 
   it.each(['button', 'Escape'] as const)('closes via %s and allows the same point to reopen', async method => {
@@ -645,11 +1160,11 @@ describe('map placemark details with controlled selection', () => {
 
   it('hides markers and removes details in 3D without emitting a user close', async () => {
     await render(); await click(marker('b'))
-    const previous = latestPopup()
+    const host = expectFixedPanel(), previous = details()
     await click(container.querySelector('[data-track-view="sandbox"]')!)
     expect(container.querySelector('.trk-map-wrap')!.classList.contains('trk-sandbox-active')).toBe(true)
     expect(container.querySelector('.trk-map')!.getAttribute('aria-hidden')).toBe('true')
-    expect(previous.remove).toHaveBeenCalledOnce()
+    expect(previous.isConnected).toBe(false); expect(detailsHost()).toBe(host)
     expect(container.querySelector('[role="dialog"]')).toBeNull()
     expect(closed).not.toHaveBeenCalled()
     expect(selection()).toBe('b')
@@ -657,15 +1172,14 @@ describe('map placemark details with controlled selection', () => {
     expectDetails('b')
   })
 
-  it('removes the map, markers and popup on unmount without a close callback', async () => {
+  it('removes the map, markers and fixed panel on unmount without a close callback', async () => {
     await render(); await click(marker('a'))
-    const previous = latestPopup()
+    const host = expectFixedPanel(), previous = details()
     await act(async () => root!.unmount())
     root = null
     expect(state.maps[0].remove).toHaveBeenCalledOnce()
     expect(state.markers.every(marker => marker.remove.mock.calls.length === 1)).toBe(true)
-    expect(previous.contents?.isConnected).toBe(false)
-    expect(previous.off).toHaveBeenCalledWith('close', expect.any(Function))
+    expect(previous.isConnected).toBe(false); expect(host.isConnected).toBe(false)
     expect(closed).not.toHaveBeenCalled()
   })
 })
@@ -678,7 +1192,7 @@ describe('placemark details without WebGL', () => {
     expect(marker('a').tagName.toLowerCase()).toBe('g')
     await click(marker('a'))
     expectDetails('a')
-    expect(container.querySelector('.trk-outline-details')?.contains(details())).toBe(true)
+    expectFixedPanel()
     await click(details().querySelector('[aria-label="关闭点位详情"]')!)
     expect(selection()).toBe('none')
     expect(container.querySelector('[role="dialog"]')).toBeNull()
@@ -720,19 +1234,19 @@ describe('map placemark position editing', () => {
     expect(container.querySelector('.trk-map-drag-hint')?.textContent).toContain('暂不可编辑')
   })
 
-  it('hides the popup while dragging, emits the stable id and updates the marker and popup after the move', async () => {
+  it('hides the fixed card while dragging, emits the stable id and updates the marker and contents after the move', async () => {
     await render({editable: true}); await click(marker('a'))
-    const previous = latestPopup(), dragged = state.markers[1], original = POINTS.map(point => [...point])
+    const host = expectFixedPanel(), previous = details(), dragged = state.markers[1], original = POINTS.map(point => [...point])
     await act(async () => dragged.emit('dragstart'))
     expect(container.querySelector('[role="dialog"]')).toBeNull()
-    expect(previous.off).toHaveBeenCalledWith('close', expect.any(Function))
+    expect(previous.isConnected).toBe(false); expect(detailsHost()).toBe(host)
     expect(closed).not.toHaveBeenCalled()
     dragged.coordinates = [120.06, 30.04]
     await act(async () => dragged.emit('dragend'))
     expect(moved).toHaveBeenCalledExactlyOnceWith('b', [120.06, 30.04])
     expect(selection()).toBe('b')
     expectDetails('b')
-    expect(latestPopup().coordinates).toEqual([120.06, 30.04])
+    expectFixedPanel(); expect(details().textContent).toContain('120.060000'); expect(details().textContent).toContain('30.040000')
     expect(state.markers[state.markers.length - 1].coordinates).toEqual([120.06, 30.04])
     expect(POINTS).toEqual(original)
     expect(PLACEMARKS[1].coordinates).toEqual([120.1, 30.1])
@@ -931,7 +1445,7 @@ describe('SVG outline placemark position editing', () => {
 })
 
 describe('editing map point details and preserving hidden locations', () => {
-  it('keeps readonly popup controls unchanged and shows edit only when the callback exists', async () => {
+  it('keeps readonly card controls unchanged and shows edit only when the callback exists', async () => {
     await render(); await click(marker('a'))
     expect(details().querySelector('.trk-placemark-details-edit')).toBeNull()
     await render({editDetails: true})
@@ -1092,11 +1606,11 @@ describe('type-filtered map placemarks', () => {
     expect(details().textContent).not.toContain(PLACEMARKS[0].description)
     expect([...details().querySelectorAll('.trk-placemark-details-type')].map(badge => badge.textContent)).toEqual(['风景'])
     await click(details().querySelector('[aria-label="下一张组图片"]')!)
-    expect(selection()).toBe('b'); expect(currentGroupImage()).toBe(PLACEMARKS[1].images[0])
+    expect(selection()).toBe(GROUP.id); expect(currentGroupImage()).toBe(PLACEMARKS[1].images[0])
 
     await render({...options,placemarkTypeFilter:'type:营地'})
-    expect(container.querySelector('[role="dialog"]')).toBeNull()
-    expect(selection()).toBe('b'); expect(groupMarker().getAttribute('aria-pressed')).toBe('false')
+    expect(currentGroupImage()).toBe(GROUP.cover!.imageUrl)
+    expect(selection()).toBe(GROUP.id); expect(groupMarker().getAttribute('aria-pressed')).toBe('true')
     expect(closed).not.toHaveBeenCalled()
     await render({...options,placemarkTypeFilter:['type:营地','type:风景','untyped']})
     expect(container.querySelectorAll('[data-placemark-id]')).toHaveLength(2)
@@ -1107,11 +1621,11 @@ describe('type-filtered map placemarks', () => {
     expect(container.querySelectorAll('[data-placemark-id]')).toHaveLength(0)
     expect(container.querySelector('[role="dialog"]')).toBeNull()
     expect(container.querySelector('dialog')).toBeNull()
-    expect(selection()).toBe('b'); expect(closed).not.toHaveBeenCalled()
+    expect(selection()).toBe(GROUP.id); expect(closed).not.toHaveBeenCalled()
     await render({...options,placemarkTypeFilter:'all'})
     expect(container.querySelectorAll('[data-placemark-id]')).toHaveLength(3)
     expect(groupMarker().getAttribute('aria-label')).toBe('标记组 G2：山间风景，2 个子点')
-    expect(currentGroupImage()).toBe(PLACEMARKS[1].images[0])
+    expect(currentGroupImage()).toBe(GROUP.cover!.imageUrl)
     expect(container.querySelector('[data-placemark-id="untyped"]')?.getAttribute('aria-label')).toBe('标注点 5：未分类终点')
     expect(JSON.stringify({points:FILTER_LOCATIONS,groups:FILTER_GROUPS})).toBe(original)
   })
@@ -1124,7 +1638,7 @@ describe('type-filtered map placemarks', () => {
     expect(container.querySelector('[data-placemark-id="untyped"]')?.getAttribute('aria-label')).toBe('标注点 5：未分类终点')
     const route = container.querySelector<SVGPolylineElement>('.trk-outline polyline')!
     const points = route.getAttribute('points')
-    expect(route.getAttribute('stroke')).toBe('#3dc5ff')
+    expect(route.getAttribute('stroke')).toBe('#1bb1a7')
     await changeRouteColor('#1277aa')
     expect(route.getAttribute('stroke')).toBe('#1277aa')
     expect(route.getAttribute('points')).toBe(points)
@@ -1163,4 +1677,177 @@ it.each([false,true])('uses cached thumbnails in the map and cached originals in
  await click(details().querySelector('[aria-label="查看图片 2 大图"]')!)
  expect(container.querySelector('dialog img')?.getAttribute('src')).toBe(placemarkPhotoOriginalUrl('track-1',PLACEMARKS[0].images[1]))
  expect(selection()).toBe('a')
+})
+
+
+describe('SVG fallback point sizes in CSS pixels', () => {
+  it('compensates observer resizes while retaining editable anchors, route geometry and source coordinates', async () => {
+    state.noWebGL = true
+    const notifications = new Map<Element, () => void>()
+    const observe = vi.fn(), disconnect = vi.fn()
+    vi.stubGlobal('ResizeObserver', class {
+      constructor(private callback: () => void) {}
+      observe(target: Element) {notifications.set(target, this.callback); observe(target)}
+      disconnect = disconnect
+    })
+    writeMapSettings({...DEFAULT_MAP_SETTINGS, placemarkPointSize: 40, placemarkPointRadius: 10, placemarkPointShowName: true})
+    const group = {...GROUP, memberIds: ['b']}
+    const source = JSON.stringify({points: POINTS, placemarks: PLACEMARKS, group})
+    await render({editable: true, initialGroups: [group]})
+    const svg = outlineRect(500, 350)
+    const point = marker('a'), grouped = groupMarker()
+    const hit = point.querySelector<SVGCircleElement>('[data-point-hit]')!
+    const badge = point.querySelector<SVGRectElement>('[data-point-badge]')!
+    const name = point.querySelector<HTMLSpanElement>('.trk-outline-point-name')!
+    const nameBox = point.querySelector<SVGForeignObjectElement>('[data-point-name]')!
+    const visual = point.querySelector<SVGGElement>('[data-point-visual]')!
+    const groupVisual = grouped.querySelector<SVGGElement>('[data-point-visual]')!
+    const count = grouped.querySelector('[data-point-count]')!
+    const path = svg.querySelector('polyline')!, pathPoints = path.getAttribute('points')
+    const x = Number(hit.getAttribute('cx')), y = Number(hit.getAttribute('cy'))
+    expect(observe.mock.calls.filter(([target]) => target === svg)).toHaveLength(1)
+    expect(visual.getAttribute('transform')).toBe(`translate(${x} ${y}) scale(1) translate(${-x} ${-y})`)
+    expect(hit).toBe(point.querySelector('circle'))
+    expect([x, y]).toEqual([80, 580])
+    expect(badge.getAttribute('width')).toBe('40'); expect(badge.getAttribute('rx')).toBe('4')
+    expect(name.style.fontSize).toBe('16px')
+    expect(nameBox.getAttribute('height')).toBe('44')
+    expect(Number(hit.getAttribute('r')) * 2).toBe(48)
+
+    for (const [width, height, scale] of [[500, 350, .5], [250, 175, .25]]) {
+      outlineRect(width, height)
+      await act(async () => notifications.get(svg)!())
+      expect(marker('a')).toBe(point); expect(groupMarker()).toBe(grouped)
+      expect(point.querySelector('[data-point-visual]')).toBe(visual)
+      expect(grouped.querySelector('[data-point-visual]')).toBe(groupVisual)
+      expect(grouped.querySelector('[data-point-count]')).toBe(count)
+      expect(visual.getAttribute('transform')).toBe(`translate(${x} ${y}) scale(${1 / scale}) translate(${-x} ${-y})`)
+      const groupHit = grouped.querySelector('circle')!
+      const gx = Number(groupHit.getAttribute('cx')), gy = Number(groupHit.getAttribute('cy'))
+      expect(groupVisual.getAttribute('transform')).toBe(`translate(${gx} ${gy}) scale(${1 / scale}) translate(${-gx} ${-gy})`)
+      expect(point.querySelector('[data-point-hit]')).toBe(hit)
+      expect([Number(hit.getAttribute('cx')), Number(hit.getAttribute('cy'))]).toEqual([x, y])
+      expect(point.getAttribute('transform')).toBeNull()
+      expect(badge.getAttribute('width')).toBe('40'); expect(badge.getAttribute('rx')).toBe('4')
+      expect(name.style.fontSize).toBe('16px')
+      expect(nameBox.getAttribute('height')).toBe('44')
+      expect(Number(hit.getAttribute('r')) * 2).toBeGreaterThanOrEqual(44)
+      expect(svg.querySelector('polyline')).toBe(path); expect(path.getAttribute('points')).toBe(pathPoints)
+      expect(moved).not.toHaveBeenCalled()
+      expect(JSON.stringify({points: POINTS, placemarks: PLACEMARKS, group})).toBe(source)
+    }
+    // Only the display group is compensated; Alt+Right still moves 20 real screen pixels.
+    await act(async () => point.dispatchEvent(new KeyboardEvent('keydown', {key: 'ArrowRight', altKey: true, bubbles: true, cancelable: true})))
+    expect(moved).toHaveBeenCalledOnce(); expect(moved.mock.calls[0][0]).toBe('a')
+    expect(moved.mock.calls[0][1][0]).toBeCloseTo(120 + .1 * 80 / 840)
+    expect(moved.mock.calls[0][1][1]).toBeCloseTo(30)
+    expect(JSON.stringify({points: POINTS, placemarks: PLACEMARKS, group})).toBe(source)
+    await act(async () => root!.unmount()); root = null
+    expect(disconnect.mock.calls.length).toBe(observe.mock.calls.length)
+  })
+
+  it('keeps a 44px default hit target, handles zero sizes and uses a cleaned-up resize listener without ResizeObserver', async () => {
+    state.noWebGL = true
+    vi.stubGlobal('ResizeObserver', undefined)
+    const added = vi.spyOn(window, 'addEventListener'), removed = vi.spyOn(window, 'removeEventListener')
+    await render()
+    const svg = outlineRect(), point = marker('a')
+    const hit = point.querySelector<SVGCircleElement>('[data-point-hit]')!
+    const visual = point.querySelector<SVGGElement>('[data-point-visual]')!
+    const x = Number(hit.getAttribute('cx')), y = Number(hit.getAttribute('cy'))
+    const resize = added.mock.calls.find(([event]) => event === 'resize')![1]
+    expect(hit.getAttribute('r')).toBe('22')
+    expect(visual.getAttribute('transform')).toContain('scale(1)')
+    for (const [width, height, inverse] of [[500, 500, 2], [0, 350, 1], [NaN, 350, 1], [250, 350, 4]]) {
+      outlineRect(width, height)
+      await act(async () => window.dispatchEvent(new Event('resize')))
+      expect(marker('a')).toBe(point); expect(point.querySelector('[data-point-visual]')).toBe(visual)
+      expect(visual.getAttribute('transform')).toBe(`translate(${x} ${y}) scale(${inverse}) translate(${-x} ${-y})`)
+      expect(Number(hit.getAttribute('r')) * 2).toBe(44)
+    }
+    await act(async () => root!.unmount()); root = null
+    expect(removed.mock.calls.some(([event, handler]) => event === 'resize' && handler === resize)).toBe(true)
+    expect(svg.isConnected).toBe(false)
+  })
+})
+
+
+describe('SVG fallback content-box and screen matrix coordinates', () => {
+  it('shares the padded content-box transform for CSS sizes, picking, dragging and keyboard corrections', async () => {
+    state.noWebGL = true
+    vi.stubGlobal('ResizeObserver', undefined)
+    writeMapSettings({...DEFAULT_MAP_SETTINGS, placemarkPointShowName: true})
+    const locations: TrackPlacemark[] = [{...PLACEMARKS[0], coordinates: [120.05, 30.05]}, PLACEMARKS[1]]
+    const source = JSON.stringify({points: POINTS, locations})
+    const picked = vi.fn()
+    await act(async () => root!.render(createElement(MapView, {
+      points: POINTS, name: '带内边距轮廓', basemap: 'none', onBasemap: () => {}, placemarks: locations,
+      onMovePlacemark: moved, onSelectPlacemark: selectedFromMap, onPickPlacemark: picked,
+    })))
+    const svg = outlineRect(500, 350)
+    vi.spyOn(svg, 'getBoundingClientRect').mockReturnValue({left: 100, top: 50, width: 500, height: 350, right: 600, bottom: 400, x: 100, y: 50, toJSON: () => ({})})
+    svg.style.cssText = 'padding:12px;border:2px solid transparent;box-sizing:border-box'
+    Object.defineProperty(svg, 'getScreenCTM', {configurable: true, value: () => null})
+    await act(async () => window.dispatchEvent(new Event('resize')))
+    const point = marker('a'), visual = point.querySelector('[data-point-visual]')!
+    const hit = point.querySelector('circle')!, badge = point.querySelector('[data-point-badge]')!
+    const x = Number(hit.getAttribute('cx')), y = Number(hit.getAttribute('cy'))
+    expect(x).toBeCloseTo(500); expect(y).toBeCloseTo(350)
+    // The true 472x322 content box has scale .46 and screen origin (120, 64).
+    expect(visual.getAttribute('transform')).toBe(`translate(${x} ${y}) scale(${1 / .46}) translate(${-x} ${-y})`)
+    expect(hit.getAttribute('r')).toBe('22'); expect(badge.getAttribute('width')).toBe('24')
+    expect(point.querySelector<HTMLSpanElement>('.trk-outline-point-name')!.style.fontSize).toBe('16px')
+    await act(async () => svg.dispatchEvent(new MouseEvent('click', {bubbles: true, clientX: 350, clientY: 225})))
+    expect(picked).toHaveBeenCalledOnce()
+    expect(picked.mock.calls[0][0][0]).toBeCloseTo(120.05); expect(picked.mock.calls[0][0][1]).toBeCloseTo(30.05)
+    // (396,248) maps to the geographic route frame (600,400), without a padding-induced offset.
+    await pointer(point, 'pointerdown', 350, 225)
+    await pointer(svg, 'pointermove', 396, 248)
+    await pointer(svg, 'pointerup', 396, 248)
+    expect(moved).toHaveBeenCalledOnce(); expect(moved.mock.calls[0][0]).toBe('a')
+    expect(moved.mock.calls[0][1][0]).toBeCloseTo(120 + .1 * 520 / 840)
+    expect(moved.mock.calls[0][1][1]).toBeCloseTo(30 + .1 * 180 / 460)
+    moved.mockClear()
+    await act(async () => point.dispatchEvent(new KeyboardEvent('keydown', {key: 'ArrowRight', altKey: true, bubbles: true, cancelable: true})))
+    expect(moved).toHaveBeenCalledOnce()
+    expect(moved.mock.calls[0][1][0]).toBeCloseTo(120.05 + .1 * (20 / .46) / 840)
+    expect(moved.mock.calls[0][1][1]).toBeCloseTo(30.05)
+    expect(marker('a')).toBe(point)
+    expect(JSON.stringify({points: POINTS, locations})).toBe(source)
+  })
+
+  it('prefers a rotated getScreenCTM affine over the outer rect and inverts its screen directions', async () => {
+    state.noWebGL = true
+    vi.stubGlobal('ResizeObserver', undefined)
+    const picked = vi.fn(), source = JSON.stringify({points: POINTS, placemarks: PLACEMARKS})
+    await act(async () => root!.render(createElement(MapView, {
+      points: POINTS, name: '旋转轮廓', basemap: 'none', onBasemap: () => {}, placemarks: PLACEMARKS,
+      onMovePlacemark: moved, onSelectPlacemark: selectedFromMap, onPickPlacemark: picked,
+    })))
+    const svg = outlineRect(2000, 1500)
+    svg.style.cssText = 'padding:7px;border:3px solid transparent'
+    const getScreenCTM = vi.fn(() => ({a: 0, b: .5, c: -.5, d: 0, e: 430, f: 60}))
+    Object.defineProperty(svg, 'getScreenCTM', {configurable: true, value: getScreenCTM})
+    await act(async () => window.dispatchEvent(new Event('resize')))
+    const point = marker('a'), hit = point.querySelector('circle')!
+    expect(point.querySelector('[data-point-visual]')!.getAttribute('transform')).toBe('translate(80 580) matrix(0 -2 2 0 0 0) translate(-80 -580)')
+    expect([Number(hit.getAttribute('cx')), Number(hit.getAttribute('cy'))]).toEqual([80, 580])
+    // Forward CTM maps route frame (500,350) to screen (255,310).
+    await act(async () => svg.dispatchEvent(new MouseEvent('click', {bubbles: true, clientX: 255, clientY: 310})))
+    expect(picked).toHaveBeenCalledOnce()
+    expect(picked.mock.calls[0][0][0]).toBeCloseTo(120.05); expect(picked.mock.calls[0][0][1]).toBeCloseTo(30.05)
+    await pointer(point, 'pointerdown', 140, 100)
+    await pointer(svg, 'pointermove', 255, 310)
+    await pointer(svg, 'pointerup', 255, 310)
+    expect(moved).toHaveBeenCalledOnce()
+    expect(moved.mock.calls[0][1][0]).toBeCloseTo(120.05); expect(moved.mock.calls[0][1][1]).toBeCloseTo(30.05)
+    moved.mockClear()
+    // Under this 90-degree screen transform, ArrowRight is a northward route-frame delta.
+    await act(async () => point.dispatchEvent(new KeyboardEvent('keydown', {key: 'ArrowRight', altKey: true, bubbles: true, cancelable: true})))
+    expect(moved).toHaveBeenCalledOnce()
+    expect(moved.mock.calls[0][1][0]).toBeCloseTo(120)
+    expect(moved.mock.calls[0][1][1]).toBeCloseTo(30 + .1 * 40 / 460)
+    expect(getScreenCTM).toHaveBeenCalled(); expect(marker('a')).toBe(point)
+    expect(JSON.stringify({points: POINTS, placemarks: PLACEMARKS})).toBe(source)
+  })
 })

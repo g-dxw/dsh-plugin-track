@@ -215,8 +215,8 @@ describe('drawer lifetime and context races', () => {
     capability();await renderHook();await act(async () => { await state.toggle() })
     const wait = deferred<unknown>()
     vi.mocked(services.api!).mockReturnValueOnce(wait.promise)
-    await renderHook(tracks[0],'animation')
-    await renderHook(tracks[0],'edit')
+    await renderHook(tracks[0],'resources')
+    await renderHook(tracks[0],'image-create')
     // Both writes belong to A; its second write waits for the first.
     expect(services.api).toHaveBeenCalledTimes(2)
     expect(ensureSession).toHaveBeenCalledTimes(1)
@@ -226,8 +226,8 @@ describe('drawer lifetime and context races', () => {
     expect(services.api).toHaveBeenCalledTimes(3)
     await act(async () => {wait.resolve({});await wait.promise})
     expect(vi.mocked(services.api!).mock.calls.map(call=>call[1])).toEqual([
-      {page:'overview',trackId:'track-0'}, {page:'animation',trackId:'track-0'},
-      {page:'overview',trackId:'track-1'}, {page:'edit',trackId:'track-0'},
+      {page:'overview',trackId:'track-0'}, {page:'resources',trackId:'track-0'},
+      {page:'overview',trackId:'track-1'}, {page:'image-create',trackId:'track-0'},
     ])
     expect(state.open).toBe(true);expect(opens().at(-1)?.entityId).toBe('track-1')
     expect(opens().at(-1)?.summary?.items).toContainEqual({label:'当前线路',value:'武功山反穿'})
@@ -413,5 +413,35 @@ describe('visited project native Session ownership', () => {
     expect(state.open).toBe(true);expect(state.error).toBe('');expect(services.sessions.retain).toHaveBeenCalledTimes(2)
     await act(async()=>{root!.unmount()});root=undefined
     expect(failedRelease).toHaveBeenCalledTimes(1);expect(nextRelease).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('image actions open a native Agent without toggling it closed', () => {
+  it('returns the current project session and keeps the existing drawer open on repeated show requests', async () => {
+    capability(); await renderHook()
+    let first: Awaited<ReturnType<typeof state.show>>, second: Awaited<ReturnType<typeof state.show>>
+    await act(async () => {first = await state.show()})
+    const requestId = opens()[0].requestId
+    await act(async () => {second = await state.show()})
+    expect(first!).toEqual(session()); expect(second!).toEqual(session())
+    expect(state.open).toBe(true)
+    expect(events.every(event => event.open && event.requestId === requestId)).toBe(true)
+  })
+  it('aborts a canceled image request before opening its native drawer', async () => {
+    capability(); const wait = deferred<ReturnType<typeof session>>()
+    ensureSession.mockReturnValueOnce(wait.promise)
+    await renderHook()
+    const controller = new AbortController()
+    let showing!: ReturnType<typeof state.show>
+    await act(async () => {showing = state.show(controller.signal)})
+    const nativeSignal = ensureSession.mock.calls[0][1]!
+    controller.abort(); expect(nativeSignal.aborted).toBe(true)
+    await act(async () => {wait.resolve(session()); await showing})
+    expect(opens()).toHaveLength(0); expect(state.open).toBe(false); expect(state.busy).toBe(false)
+  })
+  it('does not prepare a session for an already canceled image request', async () => {
+    capability(); await renderHook(); const controller = new AbortController(); controller.abort()
+    await act(async () => {expect(await state.show(controller.signal)).toBeUndefined()})
+    expect(ensureSession).not.toHaveBeenCalled(); expect(opens()).toHaveLength(0)
   })
 })

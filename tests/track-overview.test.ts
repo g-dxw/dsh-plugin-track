@@ -197,6 +197,49 @@ describe('read-only overview with saved placemark changes',()=>{
   })
 })
 
+describe('selection scrolling stays within the point list', () => {
+  it.each([
+    {name: 'above', top: 172, bottom: 198, expected: 60},
+    {name: 'below', top: 294, bottom: 326, expected: 114},
+    {name: 'visible', top: 222, bottom: 254, expected: 90},
+  ])('moves only list scrollTop when the selected row is $name its visible area', async ({top, bottom, expected}) => {
+    await render()
+    const list = node.querySelector<HTMLDivElement>('.trk-overview-list')!, row = rows()[0]
+    const rect = (top: number, bottom: number) => ({x: 0, y: top, top, bottom, left: 0, right: 280, width: 280, height: bottom - top, toJSON: () => ({})})
+    Object.defineProperties(list, {clientHeight: {configurable: true, value: 100}, clientTop: {configurable: true, value: 2}})
+    const listBounds = vi.spyOn(list, 'getBoundingClientRect').mockReturnValue(rect(200, 304))
+    const rowBounds = vi.spyOn(row, 'getBoundingClientRect').mockReturnValue(rect(top, bottom))
+    const rowScroll = vi.fn(); Object.defineProperty(row, 'scrollIntoView', {configurable: true, value: rowScroll})
+    const outer = node.querySelector<HTMLElement>('.trk-overview')!, page = document.documentElement, previousPage = page.scrollTop
+    list.scrollTop = 90; outer.scrollTop = 420; node.scrollTop = 510; page.scrollTop = 630
+    try {
+      await act(async () => map.current!.onSelectPlacemark!('kml-1'))
+      expect(map.current!.selectedPlacemark).toBe('kml-1'); expect(list.scrollTop).toBe(expected)
+      expect(outer.scrollTop).toBe(420); expect(node.scrollTop).toBe(510); expect(page.scrollTop).toBe(630)
+      expect(rowScroll).not.toHaveBeenCalled()
+    } finally {page.scrollTop = previousPage; listBounds.mockRestore(); rowBounds.mockRestore()}
+  })
+
+  it('skips layoutless lists and rows and still expands a deliberately selected grouped child', async () => {
+    const group: PlacemarkGroup = {id: 'group-00000000-0000-4000-8000-000000000003', name: '外部子点定位', description: '',
+      memberIds: ['kml-1', 'kml-2'], coordinates: [120.05, 30.05]}
+    service.groups.set(track.id, [group]); await render()
+    const list = node.querySelector<HTMLDivElement>('.trk-overview-list')!, outer = node.querySelector<HTMLElement>('.trk-overview')!
+    list.scrollTop = 90; outer.scrollTop = 420
+    await act(async () => map.current!.onSelectPlacemark!('kml-2'))
+    expect(map.current!.expandedPlacemarkGroups?.has(group.id)).toBe(true)
+    expect(ids()).toEqual([group.id, 'kml-1', 'kml-2']); expect(list.scrollTop).toBe(90); expect(outer.scrollTop).toBe(420)
+    Object.defineProperty(list, 'clientHeight', {configurable: true, value: 100})
+    const row = rows().find(row => row.dataset.placemarkId === 'kml-1')!, rowScroll = vi.fn()
+    Object.defineProperty(row, 'scrollIntoView', {configurable: true, value: rowScroll})
+    const listBounds = vi.spyOn(list, 'getBoundingClientRect').mockReturnValue({x: 0, y: 200, top: 200, bottom: 300, left: 0, right: 280, width: 280, height: 100, toJSON: () => ({})})
+    try {
+      await act(async () => map.current!.onSelectPlacemark!('kml-1'))
+      expect(list.scrollTop).toBe(90); expect(outer.scrollTop).toBe(420); expect(rowScroll).not.toHaveBeenCalled()
+    } finally {listBounds.mockRestore()}
+  })
+})
+
 describe('read-only overview of persisted groups',()=>{
   it('shows a collapsed persisted group and exact child selection without exposing any processing controls',async()=>{
     const group:PlacemarkGroup={id:'group-00000000-0000-4000-8000-000000000001',name:'同一段风景',description:'保存过的分组',memberIds:['kml-1','kml-2'],coordinates:[120.05,30.05],cover:{pointId:'kml-1',imageUrl:'https://example.com/two.jpg'}}
@@ -223,6 +266,26 @@ describe('read-only overview of persisted groups',()=>{
     expect(node.querySelector('[draggable="true"]')).toBeNull()
     expect(map.current!.onMovePlacemark).toBeUndefined();expect(map.current!.onEditPlacemark).toBeUndefined()
     expect(service.api.mock.calls.every(([,data])=>data===undefined)).toBe(true)
+  })
+  it('keeps map group selection collapsed while preserving explicit child-selection expansion and source references', async () => {
+    const group: PlacemarkGroup = {id: 'group-00000000-0000-4000-8000-000000000002', name: '轮播所属组', description: '',
+      memberIds: ['kml-1', 'kml-2'], coordinates: [120.05, 30.05]}
+    service.groups.set(track.id, [group]); await render()
+    const points = map.current!.placemarks, groups = map.current!.placemarkGroups, original = JSON.stringify({points, groups})
+    for (let index = 0; index < 2; index++) {
+      await act(async () => map.current!.onSelectPlacemark!(group.id))
+      expect(map.current!.selectedPlacemark).toBe(group.id); expect(map.current!.expandedPlacemarkGroups?.size).toBe(0)
+      expect(ids()).toEqual([group.id]); expect(profile.current!.selectedPlacemark).toBe('kml-1')
+    }
+    // A real child selection still has its separate list/map expansion behavior.
+    await act(async () => map.current!.onSelectPlacemark!('kml-2'))
+    expect(map.current!.selectedPlacemark).toBe('kml-2'); expect(map.current!.expandedPlacemarkGroups?.has(group.id)).toBe(true)
+    expect(ids()).toEqual([group.id, 'kml-1', 'kml-2'])
+    await act(async () => map.current!.onClosePlacemark!())
+    expect(map.current!.selectedPlacemark).toBeNull(); expect(map.current!.expandedPlacemarkGroups?.has(group.id)).toBe(true)
+    expect(map.current!.placemarks).toBe(points); expect(map.current!.placemarkGroups).toBe(groups)
+    expect(JSON.stringify({points, groups})).toBe(original)
+    expect(service.api.mock.calls.every(([,data]) => data === undefined)).toBe(true)
   })
   it('hides incomplete group data during loading, reports a group read error and retries from the same stored result',async()=>{
     const implementation=service.api.getMockImplementation()!

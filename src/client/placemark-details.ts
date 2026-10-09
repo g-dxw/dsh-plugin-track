@@ -21,6 +21,16 @@ export interface PlacemarkGroupDetailsOptions extends PlacemarkDetailsOptions {
   onChangePhoto?: (photo: PlacemarkGroupPhoto, focusLabel?: string) => void
 }
 
+/** Shared location lines are shown once; member-specific notes stay intact. */
+function memberDescription(description: string, groupDescription: string): string {
+  const location = (line: string) => line.match(/^\s*位置\s*[：:]\s*(.+?)\s*$/u)?.[1].trim()
+  const locations = new Set(groupDescription.split(/\r\n?|\n/u).map(location).filter((value): value is string => Boolean(value)))
+  if (!locations.size) return description
+  const lines = description.split(/\r\n?|\n/u)
+  const remaining = lines.filter(line => {const value = location(line); return !value || !locations.has(value)})
+  return remaining.length === lines.length ? description : remaining.join('\n').trim()
+}
+
 /** Group slides keep the original child's metadata and image ownership. */
 export function createPlacemarkGroupDetails(group: PlacemarkGroup, points: readonly TrackPlacemark[], onClose: () => void, options: PlacemarkGroupDetailsOptions = {}): HTMLDivElement {
   const photos = groupPhotos(group, points)
@@ -39,7 +49,9 @@ export function createPlacemarkGroupDetails(group: PlacemarkGroup, points: reado
   const show = () => {
     const photo = photos[index]
     if (photo) point = photo.point
-    const child = createPlacemarkDetails(point ? {...point, images: photo ? [photo.url] : []} : {
+    const child = createPlacemarkDetails(point ? {...point,
+      description: typeof point.description === 'string' ? memberDescription(point.description, group.description) : '',
+      images: photo ? [photo.url] : []} : {
       id: group.id, name: '', description: '', coordinates: group.coordinates, images: [],
     }, onClose, {...options, onViewImage: photo && options.onViewImage ? () => options.onViewImage?.(photo.url, index) : undefined})
     child.removeAttribute('role'); child.removeAttribute('aria-modal'); child.removeAttribute('aria-label')
@@ -154,10 +166,17 @@ export function createPlacemarkDetails(point: TrackPlacemark, onClose: () => voi
     ? [...new Set(point.images.filter((value): value is string => typeof value === 'string').map(imageLink).filter((value): value is string => Boolean(value)))]
     : []
   const photoStates: ('loading' | 'ready' | 'error')[] = urls.map(() => 'loading')
+  const photoHeights = urls.map(() => 0), photoWidths = urls.map(() => 0)
   const updatePhotoState = () => {
+    const ready = photoStates.length > 0 && photoStates.every(state => state === 'ready')
     details.classList.toggle('trk-placemark-details-photo-loading', photoStates.includes('loading'))
     details.classList.toggle('trk-placemark-details-photo-error', photoStates.includes('error'))
-    details.classList.toggle('trk-placemark-details-photo-ready', photoStates.length > 0 && photoStates.every(state => state === 'ready'))
+    details.classList.toggle('trk-placemark-details-photo-ready', ready)
+    // Short images need a separate information area so navigation stays visible.
+    const cardWidth = photoWidths[0] || maxWidth
+    const height = photoHeights.reduce((sum, value, index) => sum + value * Math.min(1, cardWidth / (photoWidths[index] || cardWidth)), 0)
+      + Math.max(0, photoHeights.length - 1) * 8
+    details.classList.toggle('trk-placemark-details-photo-overlay', ready && height >= 240)
   }
   details.classList.toggle('trk-placemark-details-with-photos', urls.length > 0)
   updatePhotoState()
@@ -190,6 +209,7 @@ export function createPlacemarkDetails(point: TrackPlacemark, onClose: () => voi
         const width = image.naturalWidth * scale
         image.style.width = `${width}px`
         if (index === 0) details.style.width = `${width}px`
+        photoHeights[index] = image.naturalHeight * scale; photoWidths[index] = width
         photoStates[index] = 'ready'
         updatePhotoState()
       }, {once: true})

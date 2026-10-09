@@ -2,7 +2,8 @@ import { existsSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { readTrack, trackDir } from './artifacts.ts'
-import { validateAnnotations, validateArtLayout, validateArtRouteTransform, type ArtLayout, type ArtRouteTransform, type TrackAnnotation } from './track/annotations.ts'
+import { validateArtStyles, type ArtStyles } from './track/art-styles.ts'
+import { validateAnnotations, validateArtCanvasSize, validateArtLayout, validateArtRouteTransform, type ArtCanvasSize, type ArtLayout, type ArtRouteTransform, type TrackAnnotation } from './track/annotations.ts'
 
 /** Sidecar annotations never rewrite a track's GPX or stored coordinates. */
 export function annotationsSaved(id: string, env: NodeJS.ProcessEnv = process.env): boolean {
@@ -32,16 +33,44 @@ export function readArtRouteTransform(id: string, env: NodeJS.ProcessEnv = proce
   const document = JSON.parse(readFileSync(path, 'utf8')) as {route?: unknown}
   return validateArtRouteTransform(document.route)
 }
-export function writeAnnotations(id: string, value: unknown, env: NodeJS.ProcessEnv = process.env, layout?: unknown, route?: unknown): TrackAnnotation[] {
+/** Older canvases need a one-time fit to the new default dimensions. */
+export function artCanvasSizeSaved(id: string, env: NodeJS.ProcessEnv = process.env): boolean {
+  if (!readTrack(id, env)) throw new Error('轨迹不存在')
+  const path = join(trackDir(id, env), 'annotations.json')
+  if (!existsSync(path)) return false
+  const document = JSON.parse(readFileSync(path, 'utf8')) as {canvas?: unknown}
+  return document.canvas!==undefined
+}
+export function readArtCanvasSize(id: string, env: NodeJS.ProcessEnv = process.env): ArtCanvasSize {
+  if (!readTrack(id, env)) throw new Error('轨迹不存在')
+  const path = join(trackDir(id, env), 'annotations.json')
+  if (!existsSync(path)) return validateArtCanvasSize(undefined)
+  const document = JSON.parse(readFileSync(path, 'utf8')) as {canvas?: unknown}
+  return validateArtCanvasSize(document.canvas)
+}
+export function readArtStyles(id: string, env: NodeJS.ProcessEnv = process.env): ArtStyles {
+  if (!readTrack(id, env)) throw new Error('轨迹不存在')
+  const path = join(trackDir(id, env), 'annotations.json')
+  if (!existsSync(path)) return validateArtStyles(undefined)
+  const document = JSON.parse(readFileSync(path, 'utf8')) as {styles?: unknown}
+  return validateArtStyles(document.styles)
+}
+export function writeAnnotations(id: string, value: unknown, env: NodeJS.ProcessEnv = process.env, layout?: unknown, route?: unknown, canvas?: unknown, styles?: unknown): TrackAnnotation[] {
   const track = readTrack(id, env)
   if (!track) throw new Error('轨迹不存在')
   const annotations = validateAnnotations(value, track.coordinates.length)
   const positions = layout===undefined ? readArtLayout(id, env) : validateArtLayout(layout)
   const transform = route===undefined ? readArtRouteTransform(id, env) : validateArtRouteTransform(route)
   const directory = trackDir(id, env)
+  const savedPath = join(directory, 'annotations.json')
+  const stored = existsSync(savedPath) ? JSON.parse(readFileSync(savedPath, 'utf8')) as {canvas?: unknown; styles?: unknown} : {}
+  const dimensions = validateArtCanvasSize(canvas===undefined ? stored.canvas : canvas)
+  const includeCanvas = canvas!==undefined || stored.canvas!==undefined
+  const artworkStyles = validateArtStyles(styles===undefined ? stored.styles : styles)
+  const includeStyles = styles!==undefined || stored.styles!==undefined
   const temporary = join(directory, `.annotations-${randomUUID()}.tmp`)
   try {
-    writeFileSync(temporary, JSON.stringify({version: 1, annotations, ...(Object.keys(positions).length ? {layout: positions} : {}), ...(transform.x!==0 || transform.y!==0 || transform.scale!==1 ? {route: transform} : {})}), 'utf8')
+    writeFileSync(temporary, JSON.stringify({version: 1, annotations, ...(Object.keys(positions).length ? {layout: positions} : {}), ...(transform.x!==0 || transform.y!==0 || transform.scale!==1 ? {route: transform} : {}), ...(includeCanvas ? {canvas: dimensions} : {}), ...(includeStyles ? {styles: artworkStyles} : {})}), 'utf8')
     renameSync(temporary, join(directory, 'annotations.json'))
   } catch (error) {
     try {unlinkSync(temporary)} catch { /* only an owned temporary sidecar */ }

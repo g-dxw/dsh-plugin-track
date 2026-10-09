@@ -1,9 +1,10 @@
 import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef } from 'react'
-import { annotationPhotoLayouts, annotationPosition, artTextPosition, photoConnector, type ArtLayout, type ArtRouteTransform, type ArtTextId, type TrackAnnotation } from '../track/annotations.ts'
+import { annotationAnchorConnector, annotationAnchorPosition, annotationPhotoLayouts, annotationPosition, artTextPosition, photoConnector, type ArtLayout, type ArtRouteTransform, type ArtTextId, type TrackAnnotation } from '../track/annotations.ts'
 import type { TrackPoint } from '../protocol.ts'
 import { placemarkPhotoThumbnailUrl } from '../track/placemark-photo-assets.ts'
+import {getArtElementStyle, type ArtStyles} from '../track/art-styles.ts'
 
-type ElementGesture = {kind:'element';id:string;photo:boolean;startX:number;startY:number;x:number;y:number;group:SVGGElement;pointer:number;connector:SVGPathElement|null;originalLine:string|null;moved:boolean}
+type ElementGesture = {kind:'element';id:string;photo:boolean;startX:number;startY:number;x:number;y:number;group:SVGGElement;pointer:number;connector:SVGPathElement|null;originalLine:string|null;anchorConnector:SVGPathElement|null;originalAnchorLine:string|null;moved:boolean}
 type PanGesture = {kind:'pan';x:number;y:number;pointer:number}
 type TextGesture = {kind:'text';id:ArtTextId;routeBound:boolean;startX:number;startY:number;x:number;y:number;group:SVGGElement;pointer:number;moved:boolean}
 const editableSelector='[data-annotation-id],[data-photo-id],[data-art-text-id]'
@@ -15,10 +16,10 @@ type AnnotationCanvasProps = {
   svg:string;points:readonly TrackPoint[];annotations:readonly TrackAnnotation[]
   onChange:(annotations:TrackAnnotation[])=>void;onSelect?:(id:string,options?:{openEditor?:boolean})=>void
   onAdd?:(position:{x:number;y:number})=>void;onPan?:(delta:{x:number;y:number})=>void
-  layout?:ArtLayout;route?:ArtRouteTransform;onLayoutChange?:(layout:ArtLayout)=>void;onTextSelect?:(id:ArtTextId,options?:{openEditor?:boolean})=>void
+  layout?:ArtLayout;route?:ArtRouteTransform;styles?:ArtStyles;onLayoutChange?:(layout:ArtLayout)=>void;onTextSelect?:(id:ArtTextId,options?:{openEditor?:boolean})=>void
   adding?:boolean;panning?:boolean;disabled?:boolean;managedPan?:boolean
 }
-export const AnnotationCanvas=forwardRef<AnnotationCanvasHandle,AnnotationCanvasProps>(function AnnotationCanvas({svg,points,trackId,annotations,onChange,onSelect,onAdd,onPan,layout={},route=initialRoute,onLayoutChange,onTextSelect,adding=false,panning=false,disabled=false,managedPan=false},ref) {
+export const AnnotationCanvas=forwardRef<AnnotationCanvasHandle,AnnotationCanvasProps>(function AnnotationCanvas({svg,points,trackId,annotations,onChange,onSelect,onAdd,onPan,layout={},route=initialRoute,styles={},onLayoutChange,onTextSelect,adding=false,panning=false,disabled=false,managedPan=false},ref) {
   const gesture=useRef<Gesture|null>(null),routeView=useRef(route)
   const container=useRef<HTMLDivElement>(null),keyboardTarget=useRef<{id:string;kind:'photo'|'annotation'|'art-text'}|null>(null)
   useLayoutEffect(()=>{
@@ -41,6 +42,7 @@ export const AnnotationCanvas=forwardRef<AnnotationCanvasHandle,AnnotationCanvas
     if(current&&current.kind!=='pan'){
       current.group.removeAttribute('transform')
       if(current.kind==='element'&&current.connector&&current.originalLine)current.connector.setAttribute('d',current.originalLine)
+      if(current.kind==='element'&&current.anchorConnector&&current.originalAnchorLine)current.anchorConnector.setAttribute('d',current.originalAnchorLine)
     }
     if(current)try{container.current?.releasePointerCapture(current.pointer)}catch{/* optional capture support */}
   }
@@ -57,10 +59,13 @@ export const AnnotationCanvas=forwardRef<AnnotationCanvasHandle,AnnotationCanvas
   useEffect(()=>{cancel()},[disabled,panning,adding,svg,managedPan])
   const coordinates=(event:React.PointerEvent<HTMLDivElement>|React.MouseEvent<HTMLDivElement>,routeBound=false)=>{
     const image=event.currentTarget.querySelector('svg')!,rect=image.getBoundingClientRect()
-    const position={x:(event.clientX-rect.left)*Number(image.getAttribute('width'))/Math.max(1,rect.width),y:(event.clientY-rect.top)*Number(image.getAttribute('height'))/Math.max(1,rect.height)}
+    const viewBox=image.getAttribute('viewBox')?.trim().split(/[ ,]+/u).map(Number)
+    const width=viewBox?.[2]??Number(image.getAttribute('width')),height=viewBox?.[3]??Number(image.getAttribute('height'))
+    const position={x:(event.clientX-rect.left)*width/Math.max(1,rect.width),y:(event.clientY-rect.top)*height/Math.max(1,rect.height)}
     const view=routeView.current
     return routeBound?{x:position.x/view.scale-view.x,y:position.y/view.scale-view.y}:position
   }
+  const photoMaxX=(id:string)=>Math.min(880,Math.max(0,1200-getArtElementStyle(annotations.find(item=>item.id===id)!,styles).photoWidth))
   const move=(id:string,photo:boolean,x:number,y:number)=>onChange(annotations.map(item=>item.id!==id?item:photo?{...item,photo:{...item.photo!,x,y}}:{...item,position:{x,y}}))
   const pan=(current:PanGesture,event:React.PointerEvent<HTMLDivElement>)=>{
     const delta={x:event.clientX-current.x,y:event.clientY-current.y}
@@ -77,15 +82,16 @@ export const AnnotationCanvas=forwardRef<AnnotationCanvasHandle,AnnotationCanvas
         if(!group)return
         if(group.dataset.artTextId){
           if(!onLayoutChange)return
-          const id=group.dataset.artTextId as ArtTextId,routeBound=id==='start'||id==='end',start=coordinates(event,routeBound),[x,y]=artTextPosition(id,points,annotations,layout)
+          const id=group.dataset.artTextId as ArtTextId,routeBound=id==='start'||id==='end',start=coordinates(event,routeBound),[x,y]=artTextPosition(id,points,annotations,layout,styles)
           gesture.current={kind:'text',id,routeBound,startX:start.x,startY:start.y,x,y,group,pointer:event.pointerId,moved:false}
         }else{
         const id=group.dataset.annotationId||group.dataset.photoId!,annotation=annotations.find(item=>item.id===id)
         if(!annotation)return
-        const start=coordinates(event,true),photo=Boolean(group.dataset.photoId),layout=annotationPhotoLayouts(annotations,points).find(item=>item.annotation.id===id)
+        const start=coordinates(event,true),photo=Boolean(group.dataset.photoId),layout=annotationPhotoLayouts(annotations,points,styles).find(item=>item.annotation.id===id)
         const [x,y]=photo?[layout!.x,layout!.y]:annotationPosition(annotation,points)
         const connector=event.currentTarget.querySelector<SVGPathElement>(`[data-connector-id="${id}"]`)
-        gesture.current={kind:'element',id,photo,startX:start.x,startY:start.y,x,y,group,pointer:event.pointerId,connector,originalLine:connector?.getAttribute('d')??null,moved:false}
+        const anchorConnector=photo?null:event.currentTarget.querySelector<SVGPathElement>(`[data-anchor-connector-id="${id}"]`)
+        gesture.current={kind:'element',id,photo,startX:start.x,startY:start.y,x,y,group,pointer:event.pointerId,connector,originalLine:connector?.getAttribute('d')??null,anchorConnector,originalAnchorLine:anchorConnector?.getAttribute('d')??null,moved:false}
         }
       }
       event.preventDefault();try{event.currentTarget.setPointerCapture(event.pointerId)}catch{/* optional capture support */}
@@ -98,9 +104,13 @@ export const AnnotationCanvas=forwardRef<AnnotationCanvasHandle,AnnotationCanvas
       current.moved=current.moved||Math.hypot(dx,dy)>3
       current.group.setAttribute('transform',`translate(${dx} ${dy})`)
       if(current.kind==='element'&&current.connector){
-        const annotation=annotations.find(item=>item.id===current.id)!,layout=annotationPhotoLayouts(annotations,points).find(item=>item.annotation.id===current.id)!
+        const annotation=annotations.find(item=>item.id===current.id)!,layout=annotationPhotoLayouts(annotations,points,styles).find(item=>item.annotation.id===current.id)!
         const [mx,my]=annotationPosition(annotation,points)
-        current.connector.setAttribute('d',current.photo?photoConnector(mx,my,current.x+dx,current.y+dy):photoConnector(current.x+dx,current.y+dy,layout.x,layout.y))
+        current.connector.setAttribute('d',current.photo?photoConnector(mx,my,current.x+dx,current.y+dy,layout.width,layout.height):photoConnector(current.x+dx,current.y+dy,layout.x,layout.y,layout.width,layout.height))
+      }
+      if(current.kind==='element'&&current.anchorConnector){
+        const annotation=annotations.find(item=>item.id===current.id)!,[ax,ay]=annotationAnchorPosition(annotation,points)
+        current.anchorConnector.setAttribute('d',annotationAnchorConnector(ax,ay,current.x+dx,current.y+dy))
       }
     }}
     onPointerUp={event=>{
@@ -117,7 +127,7 @@ export const AnnotationCanvas=forwardRef<AnnotationCanvasHandle,AnnotationCanvas
         if(Math.hypot(dx,dy)>3)onLayoutChange?.({...layout,[current.id]:{x:Math.max(0,Math.min(1200,current.x+dx)),y:Math.max(0,Math.min(9000,current.y+dy))}})
         onTextSelect?.(current.id,{openEditor:!moved});return
       }
-      if(Math.hypot(dx,dy)>3)move(current.id,current.photo,Math.max(current.photo?0:24,Math.min(current.photo?880:1176,current.x+dx)),Math.max(current.photo?0:120,Math.min(9000,current.y+dy)))
+      if(Math.hypot(dx,dy)>3)move(current.id,current.photo,Math.max(current.photo?0:24,Math.min(current.photo?photoMaxX(current.id):1176,current.x+dx)),Math.max(current.photo?0:120,Math.min(9000,current.y+dy)))
       onSelect?.(current.id,{openEditor:!moved})
     }}
     onDoubleClick={event=>{if(!disabled&&!adding&&!panning&&!(event.target as Element).closest(editableSelector))onAdd?.(coordinates(event))}}
@@ -135,14 +145,14 @@ export const AnnotationCanvas=forwardRef<AnnotationCanvasHandle,AnnotationCanvas
       if(!step[event.key])return
       event.preventDefault()
       if(textId){
-        const [x,y]=artTextPosition(textId,points,annotations,layout),[dx,dy]=step[event.key]
+        const [x,y]=artTextPosition(textId,points,annotations,layout,styles),[dx,dy]=step[event.key]
         keyboardTarget.current={id:textId,kind:'art-text'}
         onLayoutChange?.({...layout,[textId]:{x:Math.max(0,Math.min(1200,x+dx)),y:Math.max(0,Math.min(9000,y+dy))}});return
       }
-      const annotation=annotations.find(item=>item.id===id)!,photo=Boolean(group?.dataset.photoId),photoLayout=annotationPhotoLayouts(annotations,points).find(item=>item.annotation.id===id)
+      const annotation=annotations.find(item=>item.id===id)!,photo=Boolean(group?.dataset.photoId),photoLayout=annotationPhotoLayouts(annotations,points,styles).find(item=>item.annotation.id===id)
       const [x,y]=photo?[photoLayout!.x,photoLayout!.y]:annotationPosition(annotation,points),[dx,dy]=step[event.key]
       keyboardTarget.current={id:id!,kind:photo?'photo':'annotation'}
-      move(id!,photo,Math.max(photo?0:24,Math.min(photo?880:1176,x+dx)),Math.max(photo?0:120,Math.min(9000,y+dy)))
+      move(id!,photo,Math.max(photo?0:24,Math.min(photo?photoMaxX(id!):1176,x+dx)),Math.max(photo?0:120,Math.min(9000,y+dy)))
     }}
     dangerouslySetInnerHTML={{__html:svg}} />
 })

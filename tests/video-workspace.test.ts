@@ -20,8 +20,8 @@ afterEach(async()=>{await act(async()=>root.unmount());node.remove();vi.unstubAl
 it('opens cases first and defers script analysis and model catalog until entering planning explicitly',async()=>{
  await act(async()=>root.render(createElement(TrackVideoScript,{track,basemap:'none',onBasemap:vi.fn(),onCancel:vi.fn()})))
  expect(node.querySelector('[aria-label="镜头案例"]')).not.toBeNull()
- expect(api).not.toHaveBeenCalled();expect(useTextModels).not.toHaveBeenCalled()
- await act(async()=>node.querySelector('button')!.click())
+ expect(api).toHaveBeenCalledWith('resources?id=workspace');expect(api).not.toHaveBeenCalledWith('annotations?id=workspace');expect(useTextModels).not.toHaveBeenCalled()
+ await act(async()=>node.querySelector('[aria-label="镜头案例"] button')!.dispatchEvent(new MouseEvent('click',{bubbles:true})))
  expect(node.textContent).toContain('分析信息与选题')
  expect(api).toHaveBeenCalledWith('annotations?id=workspace')
  const back=[...node.querySelectorAll<HTMLButtonElement>('button')].find(button=>button.textContent==='返回镜头案例')!

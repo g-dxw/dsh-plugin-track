@@ -1,4 +1,4 @@
-import { forwardRef, useImperativeHandle, useLayoutEffect, useRef, type ReactNode } from 'react'
+import { forwardRef, useImperativeHandle, useLayoutEffect, useRef, type CSSProperties, type ReactNode } from 'react'
 import Panzoom, { type PanzoomObject } from '@panzoom/panzoom'
 import type { ArtRouteTransform } from '../track/annotations.ts'
 
@@ -9,6 +9,8 @@ export type ArtCanvasViewportHandle = {
   getView:()=>ArtRouteTransform
 }
 type ArtCanvasViewportProps = {
+  aspectRatio?:number
+  background?:string
   children:ReactNode
   overlay?:ReactNode
   view?:ArtRouteTransform
@@ -20,10 +22,10 @@ type ArtCanvasViewportProps = {
   onScaleChange?:(scale:number)=>void
 }
 const initialView:ArtRouteTransform={x:0,y:0,scale:1}
-function validView(view:ArtRouteTransform=initialView):ArtRouteTransform {return{x:Number.isFinite(view.x)?view.x:0,y:Number.isFinite(view.y)?view.y:0,scale:Math.max(.25,Math.min(4,Number.isFinite(view.scale)?view.scale:1))}}
+function validView(view:ArtRouteTransform=initialView):ArtRouteTransform {return{x:Number.isFinite(view.x)?view.x:0,y:Number.isFinite(view.y)?view.y:0,scale:Math.max(.001,Math.min(4,Number.isFinite(view.scale)?view.scale:1))}}
 function sameView(a:ArtRouteTransform,b:ArtRouteTransform) {return Math.abs(a.x-b.x)<1e-8&&Math.abs(a.y-b.y)<1e-8&&Math.abs(a.scale-b.scale)<1e-8}
 
-export const ArtCanvasViewport=forwardRef<ArtCanvasViewportHandle,ArtCanvasViewportProps>(function ArtCanvasViewport({children,overlay,view,disabled=false,panning=false,adding=false,onViewChange,onViewCommit,onScaleChange},ref) {
+export const ArtCanvasViewport=forwardRef<ArtCanvasViewportHandle,ArtCanvasViewportProps>(function ArtCanvasViewport({children,overlay,view,aspectRatio,background,disabled=false,panning=false,adding=false,onViewChange,onViewCommit,onScaleChange},ref) {
   const board=useRef<HTMLDivElement>(null),scene=useRef<HTMLDivElement>(null),route=useRef<HTMLDivElement>(null),camera=useRef<PanzoomObject|null>(null)
   const frozen=useRef(disabled||adding),callbacks=useRef({onViewChange,onViewCommit,onScaleChange}),cssUnit=useRef(1),snapshot=useRef(validView(view))
   const controller=useRef<{apply:(view:ArtRouteTransform)=>void;stop:(commit:boolean)=>void;notify:(before:ArtRouteTransform,commit:boolean)=>void}|null>(null)
@@ -57,7 +59,7 @@ export const ArtCanvasViewport=forwardRef<ArtCanvasViewportHandle,ArtCanvasViewp
     }
     const start=snapshot.current
     current=Panzoom(content,{
-      canvas:true,noBind:true,animate:false,origin:'0 0',panOnlyWhenZoomed:false,minScale:.25,maxScale:4,
+      canvas:true,noBind:true,animate:false,origin:'0 0',panOnlyWhenZoomed:false,minScale:.001,maxScale:4,
       startX:start.x*cssUnit.current,startY:start.y*cssUnit.current,startScale:start.scale,
       excludeClass:'trk-panzoom-exclude',disablePan:frozen.current,disableZoom:frozen.current,
       cursor:panning?'grab':'default',overflow:'hidden',setTransform(){paint()}
@@ -160,5 +162,5 @@ export const ArtCanvasViewport=forwardRef<ArtCanvasViewportHandle,ArtCanvasViewp
     const step=event.shiftKey?60:24,directions:Record<string,{x:number;y:number}>={ArrowLeft:{x:-step,y:0},ArrowRight:{x:step,y:0},ArrowUp:{x:0,y:-step},ArrowDown:{x:0,y:step}}
     const delta=directions[event.key];if(!delta)return
     event.preventDefault();pan(delta)
-  }}><div ref={scene} className="trk-art-scene"><div ref={route} className="trk-svg-canvas trk-art-route-view">{children}</div><div className="trk-art-overlays">{overlay}</div></div></div>
+  }}><div ref={scene} className="trk-art-scene" style={{...(aspectRatio?{'--trk-art-ratio':aspectRatio}:{}),...(background?{background}: {})} as CSSProperties}><div ref={route} className="trk-svg-canvas trk-art-route-view">{children}</div><div className="trk-art-overlays">{overlay}</div></div></div>
 })

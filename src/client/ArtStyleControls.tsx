@@ -1,0 +1,80 @@
+import {useEffect,useId,useState,type ReactNode} from 'react'
+import {ART_STYLE_LIMITS,type ArtElementStyle,type ArtRouteStyle,type ArtStyles,type ArtTextStyle} from '../track/art-styles.ts'
+
+type Section = 'text'|'number'|'marker'|'connector'|'photo'
+const textKeys = ['textColor','textSize','fontFamily','fontWeight'] as const
+const sectionKeys:Record<Section,readonly (keyof ArtElementStyle)[]> = {
+  text:[...textKeys,'textOffsetX','textOffsetY'],number:['numberColor','numberSize'],
+  marker:['markerColor','markerRadius','markerBorderColor','markerBorderWidth'],
+  connector:['connectorColor','connectorWidth','connectorDash'],
+  photo:['photoWidth','photoHeight','photoRadius','photoBorderColor','photoBorderWidth','photoFit','photoCaptionBackground'],
+}
+const sectionNames:Record<Section,string> = {text:'文字与相对位置',number:'编号',marker:'标记',connector:'连接线',photo:'图片与说明底色'}
+function without<T extends object>(value:T,keys:readonly (keyof T)[]):T {const next={...value};for(const key of keys)delete next[key];return next}
+function replace<T extends object,K extends keyof T>(value:T,key:K,item:T[K]):T {return item===undefined?without(value,[key]):{...value,[key]:item}}
+function isIndependent(value:unknown) {return value!==undefined}
+
+function StyleField({scope,label,explicit,disabled,onReset,children}: {scope:string;label:string;explicit:unknown;disabled?:boolean;onReset:()=>void;children:ReactNode}) {
+  const inherited=!isIndependent(explicit),global=scope==='统一'
+  return <div className="trk-art-style-field" data-style-scope={scope} data-style-label={label} data-style-inherited={inherited}>
+    <div className="trk-art-style-label"><span>{label}</span><small title={inherited?(global?'使用内置默认值':'跟随统一样式；统一样式变化时一同更新'):'此项已单独设置；恢复后跟随统一样式'}>{inherited?(global?'默认':'跟随统一'):(global?'已设置':'独立')}</small></div>
+    <div className="trk-art-style-input">{children}<button type="button" className="trk-art-style-reset" aria-label={`恢复${scope}${label}`} title={global?'恢复默认':'恢复为统一样式'} disabled={disabled||inherited} onClick={onReset}>↺</button></div>
+  </div>
+}
+function NumberField({scope,label,value,explicit,min,max,step=1,disabled,onChange,onReset}: {scope:string;label:string;value:number;explicit:unknown;min:number;max:number;step?:number;disabled?:boolean;onChange:(value:number)=>void;onReset:()=>void}) {
+  const [draft,setDraft]=useState(String(value)),[error,setError]=useState(''),[edited,setEdited]=useState(false),id=useId()
+  useEffect(()=>{setDraft(String(value));setError('');setEdited(false)},[value,explicit])
+  function commit() {
+    if(disabled||!edited)return
+    const next=Number(draft)
+    if(!draft.trim()||!Number.isFinite(next)||next<min||next>max){setError(`请输入 ${min} 至 ${max} 的数值`);return}
+    setError('');setDraft(String(next));setEdited(false);if(next!==value||explicit===undefined)onChange(next)
+  }
+  return <div className="trk-art-style-number"><StyleField scope={scope} label={label} explicit={explicit} disabled={disabled} onReset={()=>{setError('');setDraft(String(value));setEdited(false);onReset()}}>
+    <input type="text" inputMode="decimal" aria-label={`${scope}${label}`} aria-invalid={!!error} aria-describedby={error?`${id}-error`:undefined} value={draft} disabled={disabled} data-min={min} data-max={max} data-step={step} onChange={event=>{setDraft(event.target.value);setError('');setEdited(true)}} onBlur={commit} onKeyDown={event=>{if(event.key==='Enter'){event.preventDefault();commit()}else if(event.key==='Escape'){event.preventDefault();event.stopPropagation();setDraft(String(value));setError('');setEdited(false)}}}/>
+  </StyleField>{error&&<small id={`${id}-error`} role="alert" className="trk-art-style-error">{error}</small>}</div>
+}
+function pickerColor(value:string):string {if(/^#[0-9a-f]{3}$/i.test(value))return '#'+value.slice(1).split('').map(part=>part+part).join('');return /^#[0-9a-f]{6,8}$/i.test(value)?value.slice(0,7):'#000000'}
+function ColorField({scope,label,value,explicit,disabled,onChange,onReset}: {scope:string;label:string;value:string;explicit:unknown;disabled?:boolean;onChange:(value:string)=>void;onReset:()=>void}) {
+  const [draft,setDraft]=useState(value),[error,setError]=useState(''),id=useId()
+  useEffect(()=>{setDraft(value);setError('')},[value,explicit])
+  function commit() {if(disabled)return;const next=draft.trim();if(!/^#(?:[0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(next)&&next!=='transparent'){setError('请输入十六进制颜色或 transparent');return}setError('');if(next!==value)onChange(next)}
+  return <div><StyleField scope={scope} label={label} explicit={explicit} disabled={disabled} onReset={()=>{setDraft(value);setError('');onReset()}}>
+    <div className="trk-art-style-color"><input type="color" aria-label={`${scope}${label}`} value={pickerColor(value)} disabled={disabled} onChange={event=>{setDraft(event.target.value);setError('');if(!disabled)onChange(event.target.value)}}/><input type="text" aria-label={`${scope}${label}值`} value={draft} disabled={disabled} aria-invalid={!!error} aria-describedby={error?`${id}-error`:undefined} onChange={event=>{setDraft(event.target.value);setError('')}} onBlur={commit} onKeyDown={event=>{if(event.key==='Enter'){event.preventDefault();commit()}else if(event.key==='Escape'){event.preventDefault();event.stopPropagation();setDraft(value);setError('')}}}/></div>
+  </StyleField>{error&&<small id={`${id}-error`} role="alert" className="trk-art-style-error">{error}</small>}</div>
+}
+function SelectField({scope,label,value,explicit,disabled,onChange,onReset,options}: {scope:string;label:string;value:string|number;explicit:unknown;disabled?:boolean;onChange:(value:string)=>void;onReset:()=>void;options:readonly (readonly [string|number,string])[]}) {
+  return <StyleField scope={scope} label={label} explicit={explicit} disabled={disabled} onReset={onReset}><select aria-label={`${scope}${label}`} value={String(value)} disabled={disabled} onChange={event=>{if(!disabled)onChange(event.target.value)}}>{options.map(([item,name])=><option key={item} value={String(item)}>{name}</option>)}</select></StyleField>
+}
+function typography(value:ArtTextStyle,effective:Required<ArtTextStyle>,scope:string,onChange:(value:ArtTextStyle)=>void,disabled?:boolean) {
+  const color=(key:'textColor',label:string)=><ColorField key={key} scope={scope} label={label} value={effective[key]} explicit={value[key]} disabled={disabled} onChange={next=>onChange(replace(value,key,next))} onReset={()=>onChange(without(value,[key]))}/>
+  return <>
+    {color('textColor','文字颜色')}
+    <NumberField scope={scope} label="字号" value={effective.textSize} explicit={value.textSize} {...ART_STYLE_LIMITS.textSize} disabled={disabled} onChange={next=>onChange(replace(value,'textSize',next))} onReset={()=>onChange(without(value,['textSize']))}/>
+    <SelectField scope={scope} label="字体" value={effective.fontFamily} explicit={value.fontFamily} disabled={disabled} options={[["sans","无衬线"],["serif","衬线 / 宋体"],["mono","等宽"]]} onChange={next=>onChange(replace(value,'fontFamily',next as ArtTextStyle['fontFamily']))} onReset={()=>onChange(without(value,['fontFamily']))}/>
+    <SelectField scope={scope} label="字重" value={effective.fontWeight} explicit={value.fontWeight} disabled={disabled} options={[[400,'常规'],[500,'中等'],[600,'半粗'],[700,'粗体']]} onChange={next=>onChange(replace(value,'fontWeight',Number(next) as ArtTextStyle['fontWeight']))} onReset={()=>onChange(without(value,['fontWeight']))}/>
+  </>
+}
+export function TextStyleControls({value,effective,onChange,scope,disabled=false}: {value:ArtTextStyle;effective:Required<ArtTextStyle>;onChange:(value:ArtTextStyle)=>void;scope:string;disabled?:boolean}) {
+  return <div className="trk-art-style-controls"><style>{ART_STYLE_CONTROLS_CSS}</style><div className="trk-art-style-grid">{typography(value,effective,scope,onChange,disabled)}</div><button type="button" className="trk-art-style-group-reset" disabled={disabled||!textKeys.some(key=>value[key]!==undefined)} onClick={()=>onChange(without(value,textKeys))}>恢复文字统一样式</button></div>
+}
+export function ElementStyleControls({value,effective,onChange,scope,disabled=false,sections=['text','number','marker','connector','photo'],onReset}: {value:ArtElementStyle;effective:Required<ArtElementStyle>;onChange:(value:ArtElementStyle)=>void;scope:'统一'|'当前点位';disabled?:boolean;sections?:readonly Section[];onReset?:()=>void}) {
+  function color(key:keyof ArtElementStyle,label:string) {return <ColorField key={key} scope={scope} label={label} value={String(effective[key])} explicit={value[key]} disabled={disabled} onChange={next=>onChange({...value,[key]:next})} onReset={()=>onChange(without(value,[key]))}/>}
+  function number(key:keyof typeof ART_STYLE_LIMITS & keyof ArtElementStyle,label:string) {return <NumberField key={key} scope={scope} label={label} value={Number(effective[key])} explicit={value[key]} {...ART_STYLE_LIMITS[key]} disabled={disabled} onChange={next=>onChange({...value,[key]:next})} onReset={()=>onChange(without(value,[key]))}/>}
+  return <div className="trk-art-style-controls"><style>{ART_STYLE_CONTROLS_CSS}</style>{sections.map(section=><details key={section} open={section==='text'} className="trk-art-style-section"><summary>{sectionNames[section]}</summary><div className="trk-art-style-grid">
+    {section==='text'&&<>{typography(value,effective,scope,onChange,disabled)}{number('textOffsetX','文字横向偏移')}{number('textOffsetY','文字纵向偏移')}</>}
+    {section==='number'&&<>{color('numberColor','编号颜色')}{number('numberSize','编号字号')}</>}
+    {section==='marker'&&<>{color('markerColor','标记颜色')}{number('markerRadius','标记半径')}{color('markerBorderColor','标记边框颜色')}{number('markerBorderWidth','标记边框宽度')}</>}
+    {section==='connector'&&<>{color('connectorColor','连接线颜色')}{number('connectorWidth','连接线宽度')}<SelectField scope={scope} label="连接线样式" value={effective.connectorDash} explicit={value.connectorDash} disabled={disabled} options={[["solid","实线"],["dashed","虚线"]]} onChange={next=>onChange(replace(value,'connectorDash',next as ArtElementStyle['connectorDash']))} onReset={()=>onChange(without(value,['connectorDash']))}/></>}
+    {section==='photo'&&<>{number('photoWidth','图片宽度')}{number('photoHeight','图片高度')}{number('photoRadius','图片圆角')}{color('photoBorderColor','图片边框颜色')}{number('photoBorderWidth','图片边框宽度')}<SelectField scope={scope} label="图片适配" value={effective.photoFit} explicit={value.photoFit} disabled={disabled} options={[["cover","填满框体"],["contain","完整显示"]]} onChange={next=>onChange(replace(value,'photoFit',next as ArtElementStyle['photoFit']))} onReset={()=>onChange(without(value,['photoFit']))}/>{color('photoCaptionBackground','图片说明底色')}</>}
+  </div>{section==='text'&&<small className="trk-art-style-help">点位名称与配图说明共用文字设置，未设置时各自使用默认配色。字号和偏移使用 SVG 画布单位；向右、向下为正，点位本身的位置不变。</small>}<button type="button" className="trk-art-style-group-reset" disabled={disabled||!sectionKeys[section].some(key=>value[key]!==undefined)} onClick={()=>onChange(without(value,sectionKeys[section]))}>{scope==='统一'?'恢复此组默认':'此组跟随统一样式'}</button></details>)}{onReset&&<button type="button" disabled={disabled} onClick={onReset}>当前点位全部跟随统一样式</button>}</div>
+}
+export function GlobalStyleControls({value,effectiveElement,effectiveRoute,effectiveBackground,onChange,disabled=false}: {value:ArtStyles;effectiveElement:Required<ArtElementStyle>;effectiveRoute:Required<ArtRouteStyle>;effectiveBackground:string;onChange:(value:ArtStyles)=>void;disabled?:boolean}) {
+  const route=value.route??{}
+  function routeColor(key:'color'|'startColor'|'endColor',label:string) {return <ColorField key={key} scope="统一" label={label} value={effectiveRoute[key]} explicit={route[key]} disabled={disabled} onChange={next=>onChange({...value,route:replace(route,key,next)})} onReset={()=>onChange({...value,route:without(route,[key])})}/>}
+  function routeNumber(key:'width'|'startRadius'|'endRadius',label:string,min:number,max:number) {return <NumberField key={key} scope="统一" label={label} value={effectiveRoute[key]} explicit={route[key]} min={min} max={max} step={key==='width'?.5:1} disabled={disabled} onChange={next=>onChange({...value,route:replace(route,key,next)})} onReset={()=>onChange({...value,route:without(route,[key])})}/>}
+  return <div className="trk-art-style-controls"><style>{ART_STYLE_CONTROLS_CSS}</style><p className="trk-art-style-help">统一设置会应用到跟随统一样式的元素。单独调整过的点位或标题继续保留自己的设置。</p><ElementStyleControls scope="统一" value={value.defaults??{}} effective={effectiveElement} disabled={disabled} onChange={defaults=>onChange({...value,defaults})}/><details className="trk-art-style-section"><summary>轨迹线与起终点</summary><div className="trk-art-style-grid">{routeColor('color','轨迹颜色')}{routeNumber('width','轨迹宽度',.5,40)}{routeColor('startColor','起点颜色')}{routeNumber('startRadius','起点半径',2,80)}{routeColor('endColor','终点颜色')}{routeNumber('endRadius','终点半径',2,80)}</div><button type="button" disabled={disabled||!Object.keys(route).length} onClick={()=>{const next={...value};delete next.route;onChange(next)}}>恢复轨迹默认样式</button></details><details className="trk-art-style-section"><summary>画布背景</summary><ColorField scope="统一" label="背景颜色" value={effectiveBackground} explicit={value.background} disabled={disabled} onChange={background=>onChange({...value,background})} onReset={()=>{const next={...value};delete next.background;onChange(next)}}/><small className="trk-art-style-help">输入 transparent 可使用透明背景。</small></details><button type="button" className="trk-art-style-global-reset" disabled={disabled||(!value.defaults&&!value.route&&value.background===undefined)} onClick={()=>{const next={...value};delete next.defaults;delete next.route;delete next.background;onChange(next)}}>恢复统一默认样式</button></div>
+}
+export const ART_STYLE_CONTROLS_CSS = `
+.trk-art-style-controls{min-width:0;display:grid;gap:12px;color:inherit;font-size:14px}.trk-art-style-controls p{margin:0}.trk-art-style-section{min-width:0;border:1px solid var(--trk-border);border-radius:var(--trk-radius-sm);padding:0 12px 12px;background:var(--trk-surface)}.trk-art-style-section>summary{min-height:44px;display:list-item;padding:12px 0!important;cursor:pointer;font-size:14px;font-weight:600}.trk-art-style-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,230px),1fr));gap:14px}.trk-art-style-field,.trk-art-style-number{min-width:0}.trk-art-style-label{display:flex;align-items:baseline;justify-content:space-between;gap:6px;margin-bottom:7px;flex-wrap:wrap;font-size:13px}.trk-art-style-label small{font-size:11px;color:var(--trk-muted)}.trk-art-style-input{display:flex;align-items:center;gap:6px;min-width:0}.trk-art-style-input>input,.trk-art-style-input>select{width:100%;min-width:0;min-height:44px;flex:1}.trk-art-style-controls input,.trk-art-style-controls select{border:1px solid var(--trk-border);border-radius:var(--trk-radius-sm);background:var(--trk-bg);color:inherit;padding:9px;font:inherit;box-sizing:border-box;min-width:0}.trk-art-style-color{display:flex;align-items:center;gap:6px;flex:1;min-width:0}.trk-art-style-color input[type=color]{min-width:44px;width:44px;height:44px!important;padding:4px;flex:0 0 44px}.trk-art-style-color input[type=text]{width:100%;min-width:0;min-height:44px;font-size:12px}.trk-art-style-controls button{min-height:44px;white-space:normal;overflow-wrap:anywhere}.trk-art-style-controls .trk-art-style-reset{min-width:44px;width:44px;padding:0;flex:0 0 44px;font-size:19px}.trk-art-style-group-reset{margin-top:10px;font-size:12px}.trk-art-style-help{display:block;font-size:12px;line-height:1.7;color:var(--trk-muted);margin-top:10px}.trk-art-style-error{display:block;color:var(--trk-danger,#ba2b35);font-size:12px;margin-top:6px;line-height:1.5}.trk-art-style-controls [aria-invalid=true]{border-color:var(--trk-danger,#ba2b35)}.trk-art-style-controls input:focus-visible,.trk-art-style-controls select:focus-visible,.trk-art-style-controls button:focus-visible,.trk-art-style-controls summary:focus-visible{outline:2px solid var(--trk-focus);outline-offset:2px}.trk-art-style-controls button:disabled{opacity:.5;cursor:not-allowed}
+`

@@ -55,6 +55,13 @@ export async function loadTrackPlacemarks(track: TrackRecord, signal?: AbortSign
 }
 function hasPointMetadata(point: TrackPlacemark): boolean {return point.elevation !== undefined && point.time !== undefined}
 
+/** Read the point editor's persisted state after any pending writes settle. */
+export async function loadTrackPlacemarkState(track: TrackRecord): Promise<{points: TrackPlacemark[]; groups: PlacemarkGroup[]}> {
+  const [raw, result] = await Promise.all([loadTrackPlacemarks(track), readArrangement(track.id)])
+  const state = validatePlacemarkState(result.state, track.coordinates)
+  return {points: effectivePlacemarks(raw, state), groups: state.groups}
+}
+
 async function recoverRouteContext(track: TrackRecord, points: TrackPlacemark[], signal: AbortSignal): Promise<PlacemarkRouteContext> {
   if (track.segmentStarts !== undefined) return validateRouteContext({segmentStarts: track.segmentStarts, references: points}, track.coordinates)
   const response = await fetch(`${API}/source?id=${encodeURIComponent(track.id)}`, {signal})

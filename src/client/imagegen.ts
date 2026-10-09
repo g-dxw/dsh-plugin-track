@@ -5,7 +5,20 @@ export interface ImagegenModel {
   id: string
   label: string
   channelId?: string
+  upstreamId?: string
+  /** Verified host forwarding limit for recognized CQAI model mappings; unknown stays unset. */
+  maxReferenceImages?: number
+  maxOutputImages?: number
+  allowedSizes?: readonly string[]
+  allowedQualities?: readonly string[]
+  allowedDetails?: readonly string[]
+  capabilityMessage?: string
 }
+
+export interface ResourceImageSettings {size: string; quality: string; n: number; detail: string}
+export const IMAGEGEN_RESOURCE_SETTINGS_DEFAULT: ResourceImageSettings = {size: 'auto', quality: 'auto', n: 1, detail: ''}
+export const IMAGEGEN_RESOURCE_SIZES = ['auto', '1:1', '3:4', '4:3', '9:16', '2:3', '3:2', '16:9', '21:9'] as const
+export const IMAGEGEN_RESOURCE_QUALITIES = ['auto', '1k', '2k', '4k'] as const
 
 export interface ImagegenCatalog {
   models: ImagegenModel[]
@@ -14,11 +27,24 @@ export interface ImagegenCatalog {
   message?: string
 }
 
-export interface TrackArtInput {
+export interface ResourceImageInput {
+  mode: 'edit' | 'text'
   prompt: string
-  image: string
   model: string
+  image?: string
+  /** Additional references in exact caller order; the primary remains in image. */
+  images?: string[]
   channelId?: string
+  settings?: ResourceImageSettings
+  maxReferenceImages?: number
+  maxOutputImages?: number
+  allowedSizes?: readonly string[]
+  allowedQualities?: readonly string[]
+  allowedDetails?: readonly string[]
+}
+
+export interface TrackArtInput extends Omit<ResourceImageInput, 'mode' | 'image'> {
+  image: string
 }
 
 export interface TrackArtTask {
@@ -36,6 +62,8 @@ export class ImagegenError extends Error {
 
 const API = '/api/dsh-imagegen'
 const MAX_REFERENCE_BYTES = 10 * 1024 * 1024
+const MAX_REFERENCE_IMAGES = 5
+const MAX_JSON_BODY_BYTES = 24 * 1024 * 1024
 const UNAVAILABLE = '生图插件未启用或不可用，请在插件管理中启用生图功能'
 type RecordValue = Record<string, unknown>
 
@@ -84,6 +112,56 @@ async function post(path: string, body?: unknown): Promise<RecordValue> {
   return envelope
 }
 
+/** Mirror only verified CQAI routing: forced OpenAI transport forwards at most five references. */
+export function cqaiModelCapabilities(upstreamId: string): Pick<ImagegenModel, 'maxReferenceImages' | 'maxOutputImages' | 'capabilityMessage' | 'allowedSizes' | 'allowedQualities' | 'allowedDetails'> {
+  const id = upstreamId.trim()
+  const settings = {allowedSizes: IMAGEGEN_RESOURCE_SIZES, allowedQualities: IMAGEGEN_RESOURCE_QUALITIES, allowedDetails: ['', 'standard', 'high']}
+  const known = /^(?:gpt-image|dall-e|grok-imagine(?:-|$)|nanobanana|(?:doubao-)?seedream|qwen-image(?:[-_.]|$)|(?:minimax[-_/])?image-\d+|glm-image|cogview(?:-|$))/iu.test(id)
+    || new Set(['gemini-3-pro-image', 'gemini-3-pro-image-preview', 'gemini-3.1-flash-image', 'gemini-3.1-flash-image-preview', 'gemini-3.1-flash-lite-image', 'gemini-2.5-flash-image']).has(id)
+  if (!known) return {...settings, maxOutputImages: 4, capabilityMessage: '此模型的多参考图能力尚未核实；使用多图前请选择已核实的宿主模型'}
+  if (id === 'dall-e-3') return {...settings, allowedSizes: ['auto', '1:1', '9:16', '16:9', '21:9'], allowedQualities: ['auto'], allowedDetails: [''], maxReferenceImages: 5, maxOutputImages: 1, capabilityMessage: '宿主对此模型仅保留支持的画幅、自动画质、默认细节和单张输出'}
+  if (/^(?:glm-image|cogview(?:-|$))/iu.test(id)) return {...settings, maxReferenceImages: 0, maxOutputImages: 4, capabilityMessage: '此模型在宿主目录中仅支持文字生图'}
+  return {...settings, maxReferenceImages: 5, maxOutputImages: 4, capabilityMessage: '宿主可按顺序传递最多 5 张参考图，模型是否接受以服务返回为准'}
+}
+
+/** Validate without invoking the host; never let the host silently slice references or clamp count. */
+export function validateResourceImageInput(input: ResourceImageInput): {body: RecordValue; settings: ResourceImageSettings} {
+  if (input.mode !== 'edit' && input.mode !== 'text') throw failure('图片生成模式无效', 'invalid-mode')
+  const prompt = input.prompt.trim(), model = input.model.trim()
+  if (!prompt) throw failure(input.mode === 'edit' ? '请填写图片美化要求' : '请填写生图提示词', 'prompt-required')
+  if (!model) throw failure('请选择生图模型', 'model-required')
+  const settings = {...IMAGEGEN_RESOURCE_SETTINGS_DEFAULT, ...input.settings}
+  if (!IMAGEGEN_RESOURCE_SIZES.some(value => value === settings.size) || !IMAGEGEN_RESOURCE_QUALITIES.some(value => value === settings.quality)
+    || !['', 'standard', 'high'].includes(settings.detail) || !Number.isInteger(settings.n) || settings.n < 1 || settings.n > 4) {
+    throw failure('输出参数超出宿主支持范围，请调整后再生成', 'invalid-settings')
+  }
+  const capabilities = cqaiModelCapabilities(model)
+  const allowedSizes = capabilities.allowedSizes!.filter(value => !input.allowedSizes || input.allowedSizes.includes(value))
+  const allowedQualities = capabilities.allowedQualities!.filter(value => !input.allowedQualities || input.allowedQualities.includes(value))
+  const allowedDetails = capabilities.allowedDetails!.filter(value => !input.allowedDetails || input.allowedDetails.includes(value))
+  if (!allowedSizes.includes(settings.size) || !allowedQualities.includes(settings.quality) || !allowedDetails.includes(settings.detail)) {
+    throw failure('当前宿主模型不支持这些输出参数，请调整保留的历史参数后再生成', 'unsupported-settings')
+  }
+  const maxOutputImages = Math.min(input.maxOutputImages ?? 4, capabilities.maxOutputImages ?? 4)
+  if (maxOutputImages !== undefined && settings.n > maxOutputImages) throw failure('此宿主模型不支持当前出图数量，请调整数量后再生成', 'unsupported-count')
+  if (input.channelId?.trim() && input.channelId.trim() !== 'cqai' && (settings.size !== 'auto' || settings.quality !== 'auto' || settings.n !== 1 || settings.detail !== '')) {
+    throw failure('该历史通道的输出参数能力尚未核实，请保留历史值并显式选择已核实的宿主模型通道', 'settings-channel-unverified')
+  }
+  const references = input.mode === 'edit' ? [input.image ?? '', ...(input.images ?? [])] : []
+  if (references.length > 1 && input.channelId?.trim() && input.channelId.trim() !== 'cqai') throw failure('该历史通道的多参考图传递能力尚未核实，请显式选择已核实的宿主模型通道', 'reference-channel-unverified')
+  if (references.length > MAX_REFERENCE_IMAGES) throw failure('宿主最多支持 5 张参考图，请减少参考图后再生成', 'too-many-references')
+  if (references.length > 1 && input.maxReferenceImages === undefined) throw failure('当前模型的多参考图能力尚未核实，请选择支持多参考图的宿主模型', 'reference-capability-unknown')
+  if (input.maxReferenceImages !== undefined && references.length > input.maxReferenceImages) throw failure('当前宿主模型不支持所选参考图数量，请调整参考图或切换模型', 'reference-capacity-exceeded')
+  for (const reference of references) validateReference(reference)
+  const body: RecordValue = {
+    mode: input.mode, prompt, model,
+    ...(input.mode === 'edit' ? {image: references[0].trim(), ...(references.length > 1 ? {images: references.slice(1).map(value => value.trim())} : {})} : {}),
+    channelId: input.channelId?.trim() || 'cqai', ...settings,
+  }
+  if (new TextEncoder().encode(JSON.stringify(body)).byteLength > MAX_JSON_BODY_BYTES) throw failure('参考图片合计过大，超过宿主 24 MiB 请求上限；请缩小图片后重试', 'reference-batch-too-large')
+  return {body, settings}
+}
+
 /** Reading the catalog does not submit a generation or change provider settings. */
 export async function loadImagegenCatalog(): Promise<ImagegenCatalog> {
   try {
@@ -97,7 +175,7 @@ export async function loadImagegenCatalog(): Promise<ImagegenCatalog> {
       if (!mapping || typeof mapping.alias !== 'string' || !mapping.alias.trim()
         || typeof mapping.id !== 'string' || !mapping.id.trim()) continue
       const alias = mapping.alias.trim()
-      if (!models.some(model => model.id === alias)) models.push({id: alias, label: alias, channelId: 'cqai'})
+      if (!models.some(model => model.id === alias)) models.push({id: alias, label: alias, channelId: 'cqai', upstreamId: mapping.id, ...cqaiModelCapabilities(mapping.id)})
       upstreamToAlias.set(mapping.id, alias)
     }
     const selected = typeof provider.defaultModel === 'string' ? provider.defaultModel : ''
@@ -139,21 +217,18 @@ function validateReference(image: string): void {
   }
 }
 
-/** Call only for an explicit user submission; one request produces one image. */
-export async function submitTrackArt(input: TrackArtInput): Promise<{taskId: string}> {
-  const prompt = input.prompt.trim()
-  const model = input.model.trim()
-  if (!prompt) throw failure('请填写图片美化要求', 'prompt-required')
-  if (!model) throw failure('请选择生图模型', 'model-required')
-  validateReference(input.image)
-  const envelope = await post('tasks/submit', {
-    mode: 'edit', prompt, model, image: input.image.trim(),
-    channelId: input.channelId?.trim() || 'cqai',
-    size: 'auto', quality: 'auto', n: 1, detail: '',
-  })
+/** Call only for an explicit user submission; no automatic retries or reference truncation. */
+export async function submitResourceImage(input: ResourceImageInput): Promise<{taskId: string}> {
+  const {body} = validateResourceImageInput(input)
+  const envelope = await post('tasks/submit', body)
   const task = record(envelope.task)
-  if (!task || typeof task.id !== 'string' || !task.id.trim()) throw failure('生图服务没有返回任务编号，请稍后重试')
+  if (!task || typeof task.id !== 'string' || !task.id.trim()) throw failure('生图服务没有返回任务编号，请查看 e图宝 任务后再重试')
   return {taskId: task.id}
+}
+
+/** Retained for existing track-map and point-photo workflows. */
+export async function submitTrackArt(input: TrackArtInput): Promise<{taskId: string}> {
+  return submitResourceImage({...input, mode: 'edit'})
 }
 
 /** The host lists its queue; return only the task this panel explicitly owns. */
@@ -161,8 +236,21 @@ export async function loadTrackArtTask(taskId: string): Promise<TrackArtTask> {
   if (!taskId.trim()) throw failure('生图任务编号无效', 'invalid-task')
   const envelope = await post('tasks/list')
   if (!Array.isArray(envelope.tasks)) throw failure('生图任务列表格式无效，请稍后重试')
-  const task = envelope.tasks.map(record).find(item => item?.id === taskId)
-  if (!task) return {status: 'failed', images: [], error: '生图任务不存在或已过期，请重新生成'}
+  let task = envelope.tasks.map(record).find(item => item?.id === taskId)
+  if (!task || task.status === 'completed' && task.resultAvailable === true && !record(task.result)) {
+    // Summaries omit results and cap recent terminal tasks; retrieve only our owned task.
+    let detail: RecordValue
+    try {detail = await post('tasks/get', {id: taskId})}
+    catch (error) {
+      if (!task && error instanceof ImagegenError && error.code === 'not-found') {
+        return {status: 'failed', images: [], error: '生图任务不存在或已过期，请重新生成'}
+      }
+      throw error
+    }
+    const fullTask = record(detail.task)
+    if (!fullTask || fullTask.id !== taskId) throw failure('生图任务详情不匹配，请稍后重试')
+    task = fullTask
+  }
   const status = task.status === 'cancelled' ? 'canceled' : task.status
   if (status !== 'queued' && status !== 'running' && status !== 'completed' && status !== 'failed' && status !== 'canceled') {
     throw failure('生图任务状态无效，请稍后重试')

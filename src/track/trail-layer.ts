@@ -17,7 +17,7 @@ export const TRACK_END = 'cqai-track-end'
 export const TRACK_ENDS_SOURCE = 'cqai-track-ends'
 
 /** Default track colour; also used by the elevation chart. */
-export const TRACK_COLOR = '#3dc5ff'
+export const TRACK_COLOR = '#1bb1a7'
 
 export interface TrackGeoJSON {
   line: GeoJSON.Feature<GeoJSON.LineString | GeoJSON.MultiLineString>

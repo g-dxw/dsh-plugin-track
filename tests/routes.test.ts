@@ -88,7 +88,7 @@ describe('the HTTP surface', () => {
       expect(initial.status).toBe(200)
       expect(initial.headers.get('content-type')).toContain('application/json')
       expect(await initial.json()).toEqual([])
-      // Agent opens before import and uses one workspace/session for the library.
+      // Agent opens before import using the shared library workspace/session.
       const emptyAgent = await send('agent-workspace', {})
       expect(emptyAgent.status).toBe(200)
       const agentWorkspace = await emptyAgent.json()
@@ -104,7 +104,7 @@ describe('the HTTP surface', () => {
       expect((await send('agent-session', {sessionId: 'valid-session', trackId: '../escape'})).status).toBe(400)
       expect((await send('agent-workspace', {trackId: 'missing'})).status).toBe(404)
       expect((await send('agent-session', {sessionId: 'valid-session', trackId: 'missing'})).status).toBe(404)
-      expect((await send('agent-context', {page: 'overview', trackId: 'missing'})).status).toBe(404)
+      expect((await send('agent-context', {page: 'resources', trackId: 'missing'})).status).toBe(404)
       expect((await send('agent-workspace', [])).status).toBe(400)
       expect((await send('agent-session', null)).status).toBe(400)
       expect(existsSync(join(home, 'track-agent', 'tracks'))).toBe(false)
@@ -135,7 +135,7 @@ describe('the HTTP surface', () => {
       expect(await (await send('agent-workspace', {trackId: routeB.id})).json()).toEqual({...routeBWorkspace, sessionId: 'route-b-session'})
       expect(await (await send('agent-workspace', {})).json()).toEqual({...agentWorkspace, sessionId: 'library-session'})
       const routeAContext = readFileSync(join(routeAWorkspace.path, 'track-context.json'), 'utf8')
-      for (const page of ['overview', 'animation', 'edit']) {
+      for (const page of ['resources', 'image-create', 'edit']) {
         expect(await (await send('agent-context', {page, trackId: routeB.id})).json()).toMatchObject({current: {page, trackId: routeB.id}})
       }
       expect(readFileSync(join(routeAWorkspace.path, 'track-context.json'), 'utf8')).toBe(routeAContext)

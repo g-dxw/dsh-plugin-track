@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest'
-import { annotationPhotoLayouts, annotationVisible, annotationsFromPlacemarks, ART_TEXT_LABELS, artTextPosition, diagramCoordinates, diagramHeight, routeCanvasSvg, routeSvg, trackSvg, validateAnnotations, validateArtLayout, validateArtRouteTransform } from '../src/track/annotations.ts'
+import { annotationAnchorPosition, annotationPosition, annotationPhotoLayouts, annotationVisible, annotationsFromPlacemarks, ART_TEXT_LABELS, artTextPosition, diagramCoordinates, diagramHeight, fitArtRouteToCanvas, routeCanvasSvg, routeSvg, trackSvg, validateAnnotations, validateArtLayout, validateArtRouteTransform, validateArtCanvasSize, DEFAULT_ART_CANVAS_SIZE } from '../src/track/annotations.ts'
 import type { TrackPoint } from '../src/protocol.ts'
+import { mercatorY } from '../src/track/sandbox/coordinates.ts'
 const points: TrackPoint[] = [[119.4, 30.3, 500, null], [119.5, 30.4, null, null], [119.6, 30.35, 600, null]]
 const annotations = [{id: 'poi-1', pointIndex: 1, label: '山口', color: '#7c3aed', visible: true}]
 
@@ -165,11 +166,11 @@ describe('route camera with synchronized point overlays and fixed headings', () 
   })
   it('validates complete bounded route transforms without accepting invalid or extra values', () => {
     expect(validateArtRouteTransform(undefined)).toEqual({x:0,y:0,scale:1})
-    const valid={x:-10000,y:10000,scale:.25},restored=validateArtRouteTransform(valid)
+    const valid={x:-10000,y:10000,scale:.001},restored=validateArtRouteTransform(valid)
     expect(restored).toEqual(valid)
     expect(restored).not.toBe(valid)
     expect(validateArtRouteTransform({x:10000,y:-10000,scale:4})).toEqual({x:10000,y:-10000,scale:4})
-    for(const invalid of [null,[],1,'route',new Date(),{}, {x:0,y:0},{x:0,scale:1},{y:0,scale:1},{x:0,y:0,scale:1,extra:1},{x:NaN,y:0,scale:1},{x:0,y:Infinity,scale:1},{x:0,y:0,scale:NaN},{x:-10001,y:0,scale:1},{x:0,y:10001,scale:1},{x:0,y:0,scale:.249},{x:0,y:0,scale:4.001},{x:'0',y:0,scale:1}])expect(()=>validateArtRouteTransform(invalid)).toThrow('轨迹图层变换无效')
+    for(const invalid of [null,[],1,'route',new Date(),{}, {x:0,y:0},{x:0,scale:1},{y:0,scale:1},{x:0,y:0,scale:1,extra:1},{x:NaN,y:0,scale:1},{x:0,y:Infinity,scale:1},{x:0,y:0,scale:NaN},{x:-10001,y:0,scale:1},{x:0,y:10001,scale:1},{x:0,y:0,scale:.000999},{x:0,y:0,scale:4.001},{x:'0',y:0,scale:1}])expect(()=>validateArtRouteTransform(invalid)).toThrow('轨迹图层变换无效')
     expect(()=>trackSvg(points,{name:'变换',route:{x:0,y:0,scale:Infinity}})).toThrow('轨迹图层变换无效')
   })
 })
@@ -270,5 +271,245 @@ describe('annotated SVG exports', () => {
     const document=new DOMParser().parseFromString(trackSvg(points,{name:'显示高位点',annotations:[{...hidden,visible:true}]}),'image/svg+xml')
     expect(document.documentElement.getAttribute('height')).toBe('8970')
     expect(document.querySelector('desc')?.textContent).toContain('1 个标注')
+  })
+})
+
+
+describe('geographic source anchors and independent marker layout', () => {
+  const source = {id: 'source-marker', sourceId: 'kml-source', sourceCoordinates: [119.45, 30.35] as [number,number], pointIndex: 0, label: '真实点位', color: '#7c3aed', visible: true, position: {x: 820, y: 740}}
+  it('projects fractional and off-route source coordinates independently of the nearest route index or marker layout', () => {
+    const [start, end] = diagramCoordinates(points), [lon, lat] = source.sourceCoordinates
+    const expectedX = start[0] + (lon - points[0][0]) / (points[1][0] - points[0][0]) * (end[0] - start[0])
+    const expectedY = start[1] + (mercatorY(lat) - mercatorY(points[0][1])) / (mercatorY(points[1][1]) - mercatorY(points[0][1])) * (end[1] - start[1])
+    const anchor = annotationAnchorPosition(source, points)
+    expect(anchor[0]).toBeCloseTo(expectedX, 8)
+    expect(anchor[1]).toBeCloseTo(expectedY, 8)
+    expect(anchor).not.toEqual(start)
+    expect(anchor).not.toEqual([source.position.x, source.position.y])
+    expect(annotationPosition(source, points)).toEqual([820, 740])
+    expect(annotationAnchorPosition({...source, position: {x: 100, y: 180}}, points)).toEqual(anchor)
+  })
+
+  it('moves the geographic anchor with the source while retaining the independently placed marker', () => {
+    const moved = {...source, sourceCoordinates: [119.58, 30.37] as [number,number]}
+    expect(annotationAnchorPosition(moved, points)).not.toEqual(annotationAnchorPosition(source, points))
+    expect(annotationPosition(moved, points)).toEqual(annotationPosition(source, points))
+    const document = new DOMParser().parseFromString(trackSvg(points, {name: '位置更新', annotations: [moved]}), 'image/svg+xml')
+    const anchor = document.querySelector('[data-annotation-anchor-id]')!, [ax, ay] = annotationAnchorPosition(moved, points)
+    expect(Number(anchor.getAttribute('cx'))).toBeCloseTo(ax, 2)
+    expect(Number(anchor.getAttribute('cy'))).toBeCloseTo(ay, 2)
+    expect(document.querySelector('[data-annotation-id] circle')?.getAttribute('cx')).toBe('820.00')
+  })
+
+  it('keeps exact source projection distinct from bounded marker layout and uses route indices when no source coordinate exists', () => {
+    const outside = {...source, sourceCoordinates: [119, 30.35] as [number,number], position: undefined}
+    expect(annotationAnchorPosition(outside, points)[0]).toBeLessThan(24)
+    expect(annotationPosition(outside, points)[0]).toBe(24)
+    const manual = {id: 'manual', pointIndex: 1, label: '手工', color: '#7c3aed', position: {x: 80, y: 140}}
+    expect(annotationAnchorPosition(manual, points)).toEqual(diagramCoordinates(points)[1])
+    expect(annotationPosition(manual, points)).toEqual([80, 140])
+    const crossing: TrackPoint[] = [[179.9, 30, null, null], [-179.9, 30, null, null]]
+    const [left, right] = diagramCoordinates(crossing), centered = annotationAnchorPosition({...source, sourceCoordinates: [180, 30]}, crossing)
+    expect(centered[0]).toBeCloseTo((left[0] + right[0]) / 2, 8)
+    expect(centered[1]).toBeCloseTo(left[1], 8)
+  })
+
+  it('exports non-interactive source dots and leaders inside the shared route transform', () => {
+    const route = {x: 40, y: -20, scale: 1.5}, before = structuredClone(source)
+    for (const layer of ['all', 'overlay'] as const) {
+      const document = new DOMParser().parseFromString(trackSvg(points, {name: '源锚点', annotations: [source], route, layer, interactive: true}), 'image/svg+xml')
+      const parent = document.querySelector('[data-route-annotations]')!, anchor = document.querySelector('[data-annotation-anchor-id="source-marker"]')!, leader = document.querySelector('[data-anchor-connector-id="source-marker"]')!
+      const [ax, ay] = annotationAnchorPosition(source, points)
+      expect(parent.getAttribute('transform')).toBe('translate(60 -30) scale(1.5)')
+      expect(anchor.closest('[data-route-annotations]')).toBe(parent)
+      expect(leader.closest('[data-route-annotations]')).toBe(parent)
+      expect(anchor.closest('[data-annotation-id]')).toBeNull()
+      expect(leader.getAttribute('d')).toBe(`M${ax.toFixed(2)},${ay.toFixed(2)} L820.00,740.00`)
+      for (const element of [anchor, leader]) {
+        expect(element.getAttribute('pointer-events')).toBe('none')
+        expect(element.hasAttribute('tabindex')).toBe(false)
+        expect(element.hasAttribute('role')).toBe(false)
+      }
+    }
+    expect(source).toEqual(before)
+  })
+
+  it('filters hidden source anchors and leaders and produces a zero-length leader at an unshifted source marker', () => {
+    const overlapping = {...source, id: 'overlapping', position: undefined}
+    const hidden = {...source, id: 'hidden-source', visible: false}
+    const manual = {id: 'manual', pointIndex: 0, label: '独立标记', color: '#7c3aed', visible: true}
+    const document = new DOMParser().parseFromString(trackSvg(points, {name: '显隐', annotations: [overlapping, hidden, manual]}), 'image/svg+xml')
+    expect(document.querySelectorAll('[data-annotation-anchor-id]')).toHaveLength(1)
+    expect(document.querySelector('[data-annotation-anchor-id="hidden-source"]')).toBeNull()
+    expect(document.querySelector('[data-anchor-connector-id="hidden-source"]')).toBeNull()
+    expect(document.querySelector('[data-annotation-anchor-id="manual"]')).toBeNull()
+    const [ax, ay] = annotationAnchorPosition(overlapping, points)
+    expect(document.querySelector('[data-anchor-connector-id="overlapping"]')?.getAttribute('d')).toBe(`M${ax.toFixed(2)},${ay.toFixed(2)} L${ax.toFixed(2)},${ay.toFixed(2)}`)
+  })
+})
+
+describe('source information lengths and copied source coordinates', () => {
+  it('retains source names and descriptions within point-editor limits without sharing mutable coordinates or images', () => {
+    const source = {id: 'source', name: '名'.repeat(160), description: '说'.repeat(10000), coordinates: [119.5, 30.4] as [number,number], images: ['https://example.com/photo.jpg']}
+    const before = structuredClone(source), [imported] = annotationsFromPlacemarks([source], points)
+    expect(imported.label).toBe(source.name)
+    expect(imported.description).toBe(source.description)
+    expect(validateAnnotations([imported], points.length)[0]).toMatchObject({label: source.name, description: source.description})
+    expect(imported.sourceCoordinates).not.toBe(source.coordinates)
+    expect(imported.imageUrls).not.toBe(source.images)
+    imported.sourceCoordinates![0] = 120
+    imported.imageUrls!.push('https://example.com/another.jpg')
+    expect(source).toEqual(before)
+  })
+
+  it('allows longer metadata only for valid linked sources and preserves manual annotation limits', () => {
+    const manual = {id: 'manual', pointIndex: 0, label: '名'.repeat(80), description: '说'.repeat(4000), color: '#7c3aed'}
+    expect(validateAnnotations([manual], points.length)).toHaveLength(1)
+    expect(() => validateAnnotations([{...manual, label: '名'.repeat(81)}], points.length)).toThrow('80')
+    expect(() => validateAnnotations([{...manual, description: '说'.repeat(4001)}], points.length)).toThrow('4000')
+    const source = {...manual, sourceId: 'kml-source', label: '名'.repeat(160), description: '说'.repeat(10000)}
+    expect(validateAnnotations([source], points.length)).toHaveLength(1)
+    expect(() => validateAnnotations([{...source, label: '名'.repeat(161)}], points.length)).toThrow('160')
+    expect(() => validateAnnotations([{...source, description: '说'.repeat(10001)}], points.length)).toThrow('10000')
+    for (const sourceId of ['', 'invalid/id']) expect(() => validateAnnotations([{...source, sourceId}], points.length)).toThrow('来源点位无效')
+  })
+})
+
+
+it('refreshes source metadata when the immutable route and source coordinate objects are reused', () => {
+  const coordinates: [number,number] = [119.5,30.4], source = {id:'source',name:'原名称',description:'原说明',coordinates,images:['https://example.com/old.jpg']}
+  const [old] = annotationsFromPlacemarks([source],points)
+  const [current] = annotationsFromPlacemarks([{...source,name:'当前名称',description:'当前说明',images:['https://example.com/new.jpg']}],points)
+  expect(current.pointIndex).toBe(old.pointIndex)
+  expect(current).toMatchObject({label:'当前名称',description:'当前说明',imageUrls:['https://example.com/new.jpg'],sourceCoordinates:coordinates})
+  expect(current.sourceCoordinates).not.toBe(coordinates)
+  expect(old).toMatchObject({label:'原名称',description:'原说明',imageUrls:['https://example.com/old.jpg']})
+})
+
+
+describe('source text XML output without changing point-editor information', () => {
+  it.each([
+    {name:'control character', label:'山\u0001口', rendered:'山\ufffd口'},
+    {name:'isolated high surrogate', label:'山\ud800口', rendered:'山\ufffd口'},
+    {name:'isolated low surrogate', label:'山\udfff口', rendered:'山\ufffd口'},
+    {name:'valid emoji', label:'山口 🥾🌄', rendered:'山口 🥾🌄'},
+    {name:'markup and attribute quotes', label:'<script>"&山口</script>', rendered:'<script>"&山口</script>'},
+  ])('keeps $name in source data and renders safe full labels and truncated marker/photo text', ({label,rendered}) => {
+    const source = {id:'source-xml',sourceId:'kml-1',pointIndex:0,label,description:'原始\u0001说明\ud800',color:'#7c3aed',visible:true,photo:{dataUrl:'data:image/png;base64,AAAA',x:40,y:220}}
+    const before = structuredClone(source), [validated] = validateAnnotations([source],points.length)
+    expect(validated.label).toBe(label)
+    expect(validated.description).toBe(source.description)
+    const document = new DOMParser().parseFromString(trackSvg(points,{name:'正常路线',annotations:[validated],interactive:true}),'image/svg+xml')
+    expect(document.querySelector('parsererror')).toBeNull()
+    expect(document.querySelector('script,foreignObject')).toBeNull()
+    expect(document.querySelector('[data-annotation-id]')?.getAttribute('aria-label')).toBe(`编辑点位 1：${rendered}`)
+    expect(document.querySelector('[data-photo-id]')?.getAttribute('aria-label')).toBe(`${rendered}的照片`)
+    expect(document.querySelector('[data-annotation-id]')?.lastElementChild?.textContent).toBe(Array.from(rendered).slice(0,18).join(''))
+    expect(document.querySelector('[data-photo-id]')?.lastElementChild?.textContent).toBe(`1 · ${Array.from(rendered).slice(0,13).join('')}`)
+    expect(source).toEqual(before)
+  })
+
+  it('preserves leading and trailing source text while manual labels retain their trim behavior', () => {
+    const source = {id:'source',sourceId:'kml-1',pointIndex:0,label:'  山\u0001口  ',description:'  源说明\ud800  ',color:'#7c3aed'}
+    expect(validateAnnotations([source],points.length)[0]).toMatchObject({label:source.label,description:source.description})
+    expect(validateAnnotations([{id:'manual',pointIndex:0,label:'  手工标题  ',color:'#7c3aed'}],points.length)[0].label).toBe('手工标题')
+  })
+
+  it('continues rejecting invalid manual labels, manual descriptions and route titles', () => {
+    const manual = {id:'manual',pointIndex:0,label:'手工点位',color:'#7c3aed',visible:true}
+    for (const invalid of ['坏\u0001字符','坏\ud800字符','坏\udfff字符']) {
+      expect(() => validateAnnotations([{...manual,label:invalid}],points.length)).toThrow('标注名称')
+      expect(() => validateAnnotations([{...manual,description:invalid}],points.length)).toThrow('点位说明')
+      expect(() => trackSvg(points,{name:invalid,annotations:[manual]})).toThrow('非法 XML 字符')
+    }
+  })
+})
+
+
+describe('fixed-size annotation artwork', () => {
+  it('validates and copies pixel dimensions without changing the 1200-unit coordinate system', () => {
+    expect(validateArtCanvasSize(undefined)).toEqual({width:1200,height:900})
+    expect(validateArtCanvasSize(undefined)).not.toBe(DEFAULT_ART_CANVAS_SIZE)
+    const canvas={width:240,height:4096},validated=validateArtCanvasSize(canvas)
+    expect(validated).toEqual(canvas);expect(validated).not.toBe(canvas)
+    expect(validateArtCanvasSize({width:4096,height:240})).toEqual({width:4096,height:240})
+    for(const invalid of [null,[],1,'size',new Date(),{}, {width:1200},{height:900},{width:1200,height:900,extra:true},{width:239,height:900},{width:4097,height:900},{width:1200,height:239},{width:1200,height:4097},{width:NaN,height:900},{width:Infinity,height:900},{width:1200.5,height:900},{width:1200,height:900.5},{width:'1200',height:900}])expect(()=>validateArtCanvasSize(invalid)).toThrow()
+  })
+
+  it('exports exact requested pixels and a proportional viewBox without expanding for stored marker or text positions', () => {
+    const item={...annotations[0],position:{x:400,y:8800},photo:{dataUrl:'data:image/png;base64,AAAA',x:80,y:8600}},layout={title:{x:100,y:8000}}
+    const before=structuredClone({item,layout,points})
+    for(const canvas of [{width:1200,height:900},{width:1600,height:900},{width:900,height:1600},{width:240,height:4096}]) {
+      const document=new DOMParser().parseFromString(trackSvg(points,{name:'尺寸',annotations:[item],layout,canvas}),'image/svg+xml'),svg=document.documentElement
+      expect(document.querySelector('parsererror')).toBeNull()
+      expect(svg.getAttribute('width')).toBe(String(canvas.width));expect(svg.getAttribute('height')).toBe(String(canvas.height))
+      expect(svg.getAttribute('viewBox')).toBe(`0 0 1200 ${1200*canvas.height/canvas.width}`)
+      expect(document.querySelector('[data-art-layer="background"]')?.getAttribute('height')).toBe(String(1200*canvas.height/canvas.width))
+      expect(document.querySelector('[data-annotation-id] circle')?.getAttribute('cy')).toBe('8800.00')
+      expect(document.querySelector('[data-photo-id] rect')?.getAttribute('y')).toBe('8600')
+      expect(document.querySelector('[data-route]')?.getAttribute('d')).toBe(new DOMParser().parseFromString(trackSvg(points,{name:'旧画布'}),'image/svg+xml').querySelector('[data-route]')?.getAttribute('d'))
+    }
+    expect({item,layout,points}).toEqual(before)
+    expect(new DOMParser().parseFromString(trackSvg(points,{name:'旧画布',annotations:[item],layout}),'image/svg+xml').documentElement.getAttribute('height')).toBe('8870')
+  })
+
+  it('keeps route, endpoint rings, markers, photos and leaders while omitting all fixed headings and statistics', () => {
+    const item={...annotations[0],sourceId:'source-1',sourceCoordinates:[119.45,30.35] as [number,number],photo:{dataUrl:'data:image/png;base64,AAAA'}},canvas={width:1600,height:900}
+    const document=new DOMParser().parseFromString(trackSvg(points,{name:'不要导出的路线名',annotations:[item],layout:{title:{x:100,y:8900}},canvas,annotationsOnly:true}),'image/svg+xml')
+    expect(document.querySelector('parsererror')).toBeNull()
+    for(const selector of ['[data-route]','[data-art-layer="endpoints"] circle','[data-art-layer="endpoints"] ellipse','[data-annotation-id]','[data-photo-id] image','[data-connector-id]','[data-annotation-anchor-id]','[data-anchor-connector-id]'])expect(document.querySelector(selector)).not.toBeNull()
+    expect(document.querySelector('[data-art-text-id],[data-art-text-hit]')).toBeNull()
+    expect(document.documentElement.textContent).toContain('山口')
+    for(const text of ['不要导出的路线名','起点','终点','北 ↑',' km','个轨迹点','个标注'])expect(document.documentElement.textContent).not.toContain(text)
+    expect(document.documentElement.getAttribute('height')).toBe('900')
+    expect(trackSvg(points,{name:'无效\u0001标题',annotationsOnly:true,canvas})).toContain('<title id="title">轨迹标注图</title>')
+    const overlay=new DOMParser().parseFromString(trackSvg(points,{name:'纯标注',annotations:[item],canvas,annotationsOnly:true,layer:'overlay',interactive:true}),'image/svg+xml')
+    expect(overlay.querySelector('[data-art-text-id]')).toBeNull();expect(overlay.querySelector('[data-photo-id]')).not.toBeNull()
+  })
+
+  it('fits actual visible artwork in landscape, portrait and extreme wide canvases while retaining saved local positions', () => {
+    const items=[
+      {...annotations[0],label:'沿途的十八个字山口打卡点标题名称',position:{x:1040,y:1100},sourceId:'source',sourceCoordinates:[119.42,30.31] as [number,number],photo:{dataUrl:'data:image/png;base64,AAAA',x:840,y:1500}},
+      {...annotations[0],id:'hidden',visible:false,position:{x:0,y:8800},photo:{dataUrl:'data:image/png;base64,AAAA',x:0,y:8700}}
+    ],before=structuredClone({points,items})
+    for(const canvas of [{width:1200,height:900},{width:1600,height:900},{width:900,height:1600},{width:4096,height:240}]) {
+      const route=fitArtRouteToCanvas(points,items,canvas),height=1200*canvas.height/canvas.width
+      expect(validateArtRouteTransform(route)).toEqual(route)
+      const document=new DOMParser().parseFromString(trackSvg(points,{name:'适配',annotations:items,canvas,route,annotationsOnly:true}),'image/svg+xml')
+      const displayed=(x:number,y:number):[number,number]=>[(x+route.x)*route.scale,(y+route.y)*route.scale]
+      const bounds:(readonly [number,number])[]=[]
+      for(const match of document.querySelector('[data-route]')!.getAttribute('d')!.matchAll(/[ML]([-\d.]+),([-\d.]+)/gu))bounds.push(displayed(Number(match[1]),Number(match[2])))
+      for(const element of document.querySelectorAll('[data-art-layer="photos"] rect,[data-art-layer="photos"] image')) {
+        const x=Number(element.getAttribute('x')),y=Number(element.getAttribute('y')),width=Number(element.getAttribute('width')),height=Number(element.getAttribute('height'))
+        bounds.push(displayed(x,y),displayed(x+width,y+height))
+      }
+      for(const element of document.querySelectorAll('circle,ellipse')) {
+        const x=Number(element.getAttribute('cx')),y=Number(element.getAttribute('cy')),rx=Number(element.getAttribute('r')??element.getAttribute('rx')),ry=Number(element.getAttribute('r')??element.getAttribute('ry'))
+        bounds.push(displayed(x-rx,y-ry),displayed(x+rx,y+ry))
+      }
+      const label=document.querySelector('[data-annotation-id] > text:last-child')!,labelX=Number(label.getAttribute('x')),labelY=Number(label.getAttribute('y'))
+      bounds.push(displayed(labelX,labelY-17),displayed(labelX+Array.from(label.textContent!).length*17,labelY))
+      for(const [x,y] of bounds){expect(x).toBeGreaterThanOrEqual(23.9);expect(x).toBeLessThanOrEqual(1176.1);expect(y).toBeGreaterThanOrEqual(23.9);expect(y).toBeLessThanOrEqual(height-23.9)}
+      expect(document.querySelector('[data-photo-id="hidden"]')).toBeNull()
+      expect(document.querySelector('[data-annotation-id] circle')?.getAttribute('cy')).toBe('1100.00')
+    }
+    expect({points,items}).toEqual(before)
+  })
+
+  it('allows compact fitting below the old zoom minimum and avoids counting hidden high-position content', () => {
+    const item={...annotations[0],position:{x:400,y:8800},photo:{dataUrl:'data:image/png;base64,AAAA',x:40,y:8700}},canvas={width:1200,height:900}
+    const fit=fitArtRouteToCanvas(points,[item],canvas)
+    expect(fit.scale).toBeLessThan(.25);expect(fit.scale).toBeGreaterThanOrEqual(.001)
+    expect((8700+fit.y)*fit.scale).toBeGreaterThanOrEqual(24)
+    expect((8900+fit.y)*fit.scale).toBeLessThanOrEqual(876)
+    expect(fitArtRouteToCanvas(points,[{...item,visible:false}],canvas)).toEqual(fitArtRouteToCanvas(points,[],canvas))
+  })
+
+  it('reports artwork outside the supported camera bounds without altering off-route source coordinates', () => {
+    const item={...annotations[0],sourceId:'far',sourceCoordinates:[0,0] as [number,number]},before=structuredClone(item)
+    expect(()=>fitArtRouteToCanvas(points,[item],{width:1200,height:900})).toThrow('标注范围过大')
+    expect(item).toEqual(before)
+    expect(()=>fitArtRouteToCanvas(points.slice(0,1),[],{width:1200,height:900})).toThrow('至少需要 2 个点')
+    expect(()=>trackSvg(points,{name:'无效画布',canvas:{width:0,height:900}})).toThrow('整数像素')
   })
 })

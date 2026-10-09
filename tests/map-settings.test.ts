@@ -3,8 +3,14 @@ import { act, createElement, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { BasemapControls, MapCredits, MapSettingsProvider, testMapConnection, useMapSettings } from '../src/client/map-settings.tsx'
-import { DEFAULT_MAP_SETTINGS, DEFAULT_SANDBOX_COLORS, LEGACY_BASEMAP_KEY, MAP_SETTINGS_KEY, readMapSettings, sanitizeLighting, sanitizeSandboxColors, sanitizeMapSettings, writeMapSettings } from '../src/track/map-settings.ts'
+import { DEFAULT_MAP_SETTINGS, DEFAULT_SANDBOX_COLORS, LEGACY_BASEMAP_KEY, MAP_SETTINGS_KEY, SANDBOX_LABEL_SIZE_MIN, SANDBOX_LABEL_SIZE_MAX, SANDBOX_LABEL_HEIGHT_MIN, SANDBOX_LABEL_HEIGHT_MAX, PLACEMARK_POINT_SIZE_MIN, PLACEMARK_POINT_SIZE_MAX, PLACEMARK_POINT_RADIUS_MIN, PLACEMARK_POINT_RADIUS_MAX, readMapSettings, sanitizeSandboxLabelSize, sanitizeSandboxLabelHeight, sanitizePlacemarkPointSize, sanitizePlacemarkPointRadius, sanitizeLighting, sanitizeSandboxColors, sanitizeMapSettings, writeMapSettings } from '../src/track/map-settings.ts'
 import { basemapCredits, OSM_STYLE, styleFor, terrainProviderFor, VECTOR_STYLE } from '../src/track/basemaps.ts'
+
+const defaultPointSettings = {
+  terrainPlacemarkMode: 'point', sandboxPlacemarkMode: 'marker', placemarkPointSize: 24,
+  placemarkPointColor: '#c83532', placemarkGroupColor: '#2563eb', placemarkPointRadius: 50,
+  placemarkPointShowCount: true, placemarkPointShowName: false,
+} as const
 
 afterEach(() => {vi.restoreAllMocks(); localStorage.clear()})
 
@@ -32,17 +38,148 @@ describe('versioned map settings and provider definitions', () => {
     expect(settings.lighting).toEqual({azimuth: 0, elevation: 85, intensity: 5, ambient: 0.65, shadows: false})
     expect(sanitizeLighting(null)).toEqual({azimuth: 118, elevation: 85, intensity: 4.1, ambient: 0.65, shadows: true})
   })
+  it('fills independent native-point and sandbox-marker defaults in old settings without replacing existing styling', () => {
+    expect(DEFAULT_MAP_SETTINGS).toMatchObject(defaultPointSettings)
+    const old = {version: 1, basemap: 'terrain', routeColor: '#224466', sandboxLabelColor: '#abcdef', sandboxConnectorColor: '#654321', sandboxLabelSize: 22, sandboxLabelHeight: 1.8, sandboxPlacemarks: false, sandboxMarkerPaletteVersion: 3}
+    localStorage.setItem(MAP_SETTINGS_KEY, JSON.stringify(old))
+    expect(readMapSettings()).toMatchObject({...old, ...defaultPointSettings})
+    expect(JSON.parse(localStorage.getItem(MAP_SETTINGS_KEY)!)).toEqual(old)
+  })
+  it('accepts the two display modes independently and persists shared point styles without touching marker styling', () => {
+    const original = sanitizeMapSettings({basemap: 'terrain', routeColor: '#224466', sandboxLabelColor: '#abcdef', sandboxConnectorColor: '#654321', sandboxLabelSize: 22, sandboxLabelHeight: 1.8, sandboxPlacemarks: false})
+    for (const field of ['terrainPlacemarkMode', 'sandboxPlacemarkMode'] as const) {
+      for (const mode of ['point', 'marker'] as const) expect(sanitizeMapSettings({...original, [field]: mode})).toEqual({...original, [field]: mode})
+    }
+    const saved = writeMapSettings({...original, terrainPlacemarkMode: 'marker', sandboxPlacemarkMode: 'point', placemarkPointSize: 41, placemarkPointColor: '#aabbcc', placemarkGroupColor: '#abcdef', placemarkPointRadius: 12})
+    expect(saved).toEqual({...original, terrainPlacemarkMode: 'marker', sandboxPlacemarkMode: 'point', placemarkPointSize: 41, placemarkPointColor: '#aabbcc', placemarkGroupColor: '#abcdef', placemarkPointRadius: 12})
+    expect(readMapSettings()).toEqual(saved)
+    expect(JSON.parse(localStorage.getItem(MAP_SETTINGS_KEY)!)).toEqual(saved)
+    const changed = writeMapSettings({...saved, terrainPlacemarkMode: 'point'})
+    expect(readMapSettings()).toEqual({...saved, terrainPlacemarkMode: 'point'})
+    expect(changed.sandboxPlacemarkMode).toBe('point')
+    expect(changed.sandboxMarkerPaletteVersion).toBe(3)
+  })
+  it('recovers malformed display modes per view without changing unrelated preferences', () => {
+    const original = sanitizeMapSettings({terrainPlacemarkMode: 'marker', sandboxPlacemarkMode: 'point', placemarkPointSize: 41, placemarkPointRadius: 12, placemarkPointColor: '#aabbcc', placemarkGroupColor: '#abcdef', sandboxLabelHeight: 1.8})
+    for (const mode of [undefined, null, '', 'Point', ' marker ', 'number', true, 0, {}, []]) {
+      expect(sanitizeMapSettings({...original, terrainPlacemarkMode: mode})).toEqual({...original, terrainPlacemarkMode: 'point'})
+      expect(sanitizeMapSettings({...original, sandboxPlacemarkMode: mode})).toEqual({...original, sandboxPlacemarkMode: 'marker'})
+    }
+  })
+  it('accepts strict point count and name flags and persists each preference independently of style and modes', () => {
+    const original = sanitizeMapSettings({terrainPlacemarkMode: 'marker', sandboxPlacemarkMode: 'point', placemarkPointSize: 41, placemarkPointRadius: 12, placemarkPointColor: '#aabbcc', placemarkGroupColor: '#abcdef', sandboxLabelColor: '#123456', sandboxLabelSize: 22, sandboxLabelHeight: 1.8, placemarkPointShowCount: false, placemarkPointShowName: true})
+    for (const field of ['placemarkPointShowCount', 'placemarkPointShowName'] as const) {
+      for (const value of [false, true]) expect(sanitizeMapSettings({...original, [field]: value})).toEqual({...original, [field]: value})
+    }
+    const countOnly = writeMapSettings({...original, placemarkPointShowCount: true})
+    expect(readMapSettings()).toEqual({...original, placemarkPointShowCount: true})
+    const nameOnly = writeMapSettings({...countOnly, placemarkPointShowName: false})
+    expect(readMapSettings()).toEqual({...original, placemarkPointShowCount: true, placemarkPointShowName: false})
+    expect(JSON.parse(localStorage.getItem(MAP_SETTINGS_KEY)!)).toEqual(nameOnly)
+    expect(nameOnly.sandboxMarkerPaletteVersion).toBe(3)
+  })
+  it('restores legacy count and name defaults for malformed flags without coercion or loss of styling', () => {
+    const original = sanitizeMapSettings({terrainPlacemarkMode: 'marker', sandboxPlacemarkMode: 'point', placemarkPointSize: 41, placemarkPointRadius: 12, sandboxLabelColor: '#123456', sandboxLabelSize: 22, sandboxLabelHeight: 1.8, placemarkPointShowCount: false, placemarkPointShowName: true})
+    for (const value of [undefined, null, 'false', 'true', 0, 1, {}, [], NaN, Infinity]) {
+      expect(sanitizeMapSettings({...original, placemarkPointShowCount: value})).toEqual({...original, placemarkPointShowCount: true})
+      expect(sanitizeMapSettings({...original, placemarkPointShowName: value})).toEqual({...original, placemarkPointShowName: false})
+      localStorage.setItem(MAP_SETTINGS_KEY, JSON.stringify({...original, placemarkPointShowCount: value, placemarkPointShowName: value}))
+      expect(readMapSettings()).toEqual({...original, placemarkPointShowCount: true, placemarkPointShowName: false})
+    }
+    expect(original).toMatchObject({placemarkPointShowCount: false, placemarkPointShowName: true})
+  })
+  it('clamps and rounds shared point sizes and preserves zero-radius square tiles', () => {
+    expect(PLACEMARK_POINT_SIZE_MIN).toBe(12); expect(PLACEMARK_POINT_SIZE_MAX).toBe(64)
+    expect(PLACEMARK_POINT_RADIUS_MIN).toBe(0); expect(PLACEMARK_POINT_RADIUS_MAX).toBe(50)
+    for (const [value, expected] of [[-10, 12], [11.9, 12], [12, 12], [24.4, 24], [24.5, 25], [63.6, 64], [64, 64], [100, 64]]) {
+      expect(sanitizePlacemarkPointSize(value)).toBe(expected)
+      expect(sanitizeMapSettings({placemarkPointSize: value}).placemarkPointSize).toBe(expected)
+    }
+    for (const [value, expected] of [[-10, 0], [0, 0], [.4, 0], [.5, 1], [24.4, 24], [24.5, 25], [49.6, 50], [50, 50], [100, 50]]) {
+      expect(sanitizePlacemarkPointRadius(value)).toBe(expected)
+      expect(sanitizeMapSettings({placemarkPointRadius: value}).placemarkPointRadius).toBe(expected)
+    }
+  })
+  it('uses point size and radius defaults for malformed values without replacing other preferences', () => {
+    const original = sanitizeMapSettings({terrainPlacemarkMode: 'marker', sandboxPlacemarkMode: 'point', placemarkPointSize: 41, placemarkPointRadius: 12, placemarkPointColor: '#aabbcc', placemarkGroupColor: '#abcdef', sandboxLabelHeight: 1.8})
+    for (const value of [undefined, null, '24', true, {}, [], NaN, Infinity, -Infinity]) {
+      expect(sanitizePlacemarkPointSize(value)).toBe(24)
+      expect(sanitizePlacemarkPointRadius(value)).toBe(50)
+      expect(sanitizeMapSettings({...original, placemarkPointSize: value})).toEqual({...original, placemarkPointSize: 24})
+      expect(sanitizeMapSettings({...original, placemarkPointRadius: value})).toEqual({...original, placemarkPointRadius: 50})
+    }
+  })
+  it('normalizes point and group colors independently while preserving all other preferences', () => {
+    const original = sanitizeMapSettings({routeColor: '#224466', sandboxLabelHeight: 1.8, placemarkPointSize: 41, placemarkPointRadius: 12})
+    const colors = sanitizeMapSettings({...original, placemarkPointColor: ' #AaBbCc ', placemarkGroupColor: ' #DdEeFf '})
+    expect(colors).toEqual({...original, placemarkPointColor: '#aabbcc', placemarkGroupColor: '#ddeeff'})
+    for (const value of [undefined, null, 123456, '#fff', '#12345678', 'red', 'rgb(1,2,3)', 'var(--map-bg)']) {
+      expect(sanitizeMapSettings({...colors, placemarkPointColor: value})).toEqual({...colors, placemarkPointColor: '#c83532'})
+      expect(sanitizeMapSettings({...colors, placemarkGroupColor: value})).toEqual({...colors, placemarkGroupColor: '#2563eb'})
+    }
+    expect(readMapSettings()).toEqual(DEFAULT_MAP_SETTINGS)
+  })
+  it('persists sandbox text size without changing other preferences', () => {
+    const original = sanitizeMapSettings({basemap: 'terrain', routeColor: '#abcdef', sandboxLabelColor: '#224466', sandboxConnectorColor: '#654321', sandboxPlacemarks: false})
+    const saved = writeMapSettings({...original, sandboxLabelSize: 24})
+    expect(saved).toEqual({...original, sandboxLabelSize: 24})
+    expect(readMapSettings()).toEqual(saved)
+    expect(JSON.parse(localStorage.getItem(MAP_SETTINGS_KEY)!)).toEqual(saved)
+    expect(DEFAULT_MAP_SETTINGS.sandboxLabelSize).toBe(16)
+  })
+  it('clamps and rounds finite sandbox text sizes through the shared scene and settings sanitizer', () => {
+    expect(SANDBOX_LABEL_SIZE_MIN).toBe(10); expect(SANDBOX_LABEL_SIZE_MAX).toBe(32)
+    for (const [value, expected] of [[-10, 10], [9.9, 10], [10, 10], [15.4, 15], [15.5, 16], [24.7, 25], [31.6, 32], [32, 32], [100, 32]]) {
+      expect(sanitizeSandboxLabelSize(value)).toBe(expected)
+      expect(sanitizeMapSettings({sandboxLabelSize: value}).sandboxLabelSize).toBe(expected)
+    }
+  })
+  it('uses the default text size for missing or malformed values while preserving unrelated preferences', () => {
+    const original = sanitizeMapSettings({routeColor: '#abcdef', sandboxLabelColor: '#224466', sandboxConnectorColor: '#654321', sandboxLabelSize: 24})
+    for (const sandboxLabelSize of [undefined, null, '24', true, {}, [], NaN, Infinity, -Infinity]) {
+      expect(sanitizeSandboxLabelSize(sandboxLabelSize)).toBe(16)
+      expect(sanitizeMapSettings({...original, sandboxLabelSize})).toEqual({...original, sandboxLabelSize: 16})
+    }
+  })
+  it('persists the relative sandbox text height without changing other preferences', () => {
+    const original = sanitizeMapSettings({basemap: 'terrain', routeColor: '#abcdef', sandboxLabelColor: '#224466', sandboxConnectorColor: '#654321', sandboxLabelSize: 24, sandboxPlacemarks: false})
+    const saved = writeMapSettings({...original, sandboxLabelHeight: 1.7})
+    expect(saved).toEqual({...original, sandboxLabelHeight: 1.7})
+    expect(readMapSettings()).toEqual(saved)
+    expect(JSON.parse(localStorage.getItem(MAP_SETTINGS_KEY)!)).toEqual(saved)
+    expect(DEFAULT_MAP_SETTINGS.sandboxLabelHeight).toBe(1)
+  })
+  it('clamps relative sandbox text height and rounds to one decimal through the shared sanitizer', () => {
+    expect(SANDBOX_LABEL_HEIGHT_MIN).toBe(.2); expect(SANDBOX_LABEL_HEIGHT_MAX).toBe(3)
+    for (const [value, expected] of [[-10, .2], [.19, .2], [.2, .2], [.25, .3], [1.24, 1.2], [1.25, 1.3], [1.7, 1.7], [2.96, 3], [3, 3], [100, 3]]) {
+      expect(sanitizeSandboxLabelHeight(value)).toBe(expected)
+      expect(sanitizeMapSettings({sandboxLabelHeight: value}).sandboxLabelHeight).toBe(expected)
+    }
+  })
+  it('restores the default height for missing or malformed values independently of other preferences', () => {
+    const original = sanitizeMapSettings({routeColor: '#abcdef', sandboxLabelColor: '#224466', sandboxConnectorColor: '#654321', sandboxLabelSize: 24, sandboxLabelHeight: 1.7})
+    for (const sandboxLabelHeight of [undefined, null, '1.7', true, {}, [], NaN, Infinity, -Infinity]) {
+      expect(sanitizeSandboxLabelHeight(sandboxLabelHeight)).toBe(1)
+      expect(sanitizeMapSettings({...original, sandboxLabelHeight})).toEqual({...original, sandboxLabelHeight: 1})
+    }
+  })
   it('normalizes persisted six-digit colors and recovers malformed fields independently', () => {
     const colors = {sides: '#abcdef', background: '#012aef'}
     const saved = writeMapSettings(sanitizeMapSettings({
       sandboxColors: {sides: ' #AbCdEf ', background: ' #012AEF '}, routeColor: ' #Aa11Bb ',
+      sandboxLabelColor: ' #CcDdEe ', sandboxConnectorColor: ' #Ff9900 ',
     }))
     expect(saved.routeColor).toBe('#aa11bb')
     expect(readMapSettings().routeColor).toBe('#aa11bb')
+    expect(saved.sandboxLabelColor).toBe('#ccddee')
+    expect(saved.sandboxConnectorColor).toBe('#ff9900')
+    expect(readMapSettings()).toEqual(saved)
     expect(saved.sandboxColors).toEqual(colors)
     expect(readMapSettings().sandboxColors).toEqual(colors)
     for (const invalid of [null, 123456, '#fff', '#12345678', 'red', 'rgb(1, 2, 3)', 'var(--map-bg)']) {
       expect(sanitizeMapSettings({...saved, routeColor: invalid})).toEqual({...saved, routeColor: DEFAULT_MAP_SETTINGS.routeColor})
+      expect(sanitizeMapSettings({...saved, sandboxLabelColor: invalid})).toEqual({...saved, sandboxLabelColor: DEFAULT_MAP_SETTINGS.sandboxLabelColor})
+      expect(sanitizeMapSettings({...saved, sandboxConnectorColor: invalid})).toEqual({...saved, sandboxConnectorColor: DEFAULT_MAP_SETTINGS.sandboxConnectorColor})
       expect(sanitizeSandboxColors({sides: invalid, background: colors.background})).toEqual({
         sides: DEFAULT_SANDBOX_COLORS.sides, background: colors.background,
       })
@@ -51,7 +188,10 @@ describe('versioned map settings and provider definitions', () => {
       })
     }
     expect(DEFAULT_SANDBOX_COLORS).toEqual({sides: '#707070', background: '#bacaaa'})
-    expect(DEFAULT_MAP_SETTINGS.routeColor).toBe('#3dc5ff')
+    expect(DEFAULT_MAP_SETTINGS.routeColor).toBe('#1bb1a7')
+    expect(DEFAULT_MAP_SETTINGS.sandboxLabelColor).toBe('#ffffff')
+    expect(DEFAULT_MAP_SETTINGS.sandboxConnectorColor).toBe('#ffffff')
+    expect(DEFAULT_MAP_SETTINGS.sandboxMarkerPaletteVersion).toBe(3)
   })
   it('fills sandbox appearance defaults in old version-one preferences without losing view or service settings', () => {
     const old = {
@@ -61,11 +201,77 @@ describe('versioned map settings and provider definitions', () => {
     }
     localStorage.setItem(MAP_SETTINGS_KEY, JSON.stringify(old))
     const restored = readMapSettings()
-    expect(restored).toEqual({...old, tiandituKey: '', routeColor: DEFAULT_MAP_SETTINGS.routeColor, sandboxColors: DEFAULT_SANDBOX_COLORS, sandboxBackground: 'solid', sandboxPlacemarks: true})
+    expect(restored).toEqual({...old, ...defaultPointSettings, tiandituKey: '', routeColor: DEFAULT_MAP_SETTINGS.routeColor, sandboxLabelColor: DEFAULT_MAP_SETTINGS.sandboxLabelColor, sandboxLabelSize: DEFAULT_MAP_SETTINGS.sandboxLabelSize, sandboxLabelHeight: DEFAULT_MAP_SETTINGS.sandboxLabelHeight, sandboxConnectorColor: DEFAULT_MAP_SETTINGS.sandboxConnectorColor, sandboxMarkerPaletteVersion: 3, sandboxColors: DEFAULT_SANDBOX_COLORS, sandboxBackground: 'solid', sandboxPlacemarks: true})
     writeMapSettings({...restored, quality: 'eco'})
     expect(JSON.parse(localStorage.getItem(MAP_SETTINGS_KEY)!)).toEqual({
-      ...old, quality: 'eco', tiandituKey: '', routeColor: DEFAULT_MAP_SETTINGS.routeColor, sandboxColors: DEFAULT_SANDBOX_COLORS, sandboxBackground: 'solid', sandboxPlacemarks: true,
+      ...old, ...defaultPointSettings, quality: 'eco', tiandituKey: '', routeColor: DEFAULT_MAP_SETTINGS.routeColor, sandboxLabelColor: DEFAULT_MAP_SETTINGS.sandboxLabelColor, sandboxLabelSize: DEFAULT_MAP_SETTINGS.sandboxLabelSize, sandboxLabelHeight: DEFAULT_MAP_SETTINGS.sandboxLabelHeight, sandboxConnectorColor: DEFAULT_MAP_SETTINGS.sandboxConnectorColor, sandboxMarkerPaletteVersion: 3, sandboxColors: DEFAULT_SANDBOX_COLORS, sandboxBackground: 'solid', sandboxPlacemarks: true,
     })
+  })
+  it('fills missing sandbox marker colors independently of a custom route color in old version-one settings', () => {
+    localStorage.setItem(MAP_SETTINGS_KEY, JSON.stringify({version: 1, basemap: 'terrain', routeColor: '#aabbcc'}))
+    const restored = readMapSettings()
+    expect(restored).toMatchObject({version: 1, basemap: 'terrain', routeColor: '#aabbcc', sandboxLabelColor: '#ffffff', sandboxLabelSize: 16, sandboxLabelHeight: 1, sandboxConnectorColor: '#ffffff', sandboxMarkerPaletteVersion: 3})
+    const saved = writeMapSettings({...restored, sandboxLabelColor: '#123456'})
+    expect(readMapSettings()).toEqual(saved)
+    expect(saved.routeColor).toBe('#aabbcc')
+    expect(saved.sandboxConnectorColor).toBe('#ffffff')
+    expect(JSON.parse(localStorage.getItem(MAP_SETTINGS_KEY)!).version).toBe(1)
+  })
+  it.each([
+    {routeColor: ' #3DC5FF ', sandboxConnectorColor: ' #3dC5fF '},
+    {routeColor: '#3dc5ff', sandboxConnectorColor: '#ffb347'},
+    {routeColor: '#3dc5ff', sandboxConnectorColor: '#ffb347', sandboxMarkerPaletteVersion: 2},
+  ])('migrates the persisted previous default palette once to teal and white: %j', colors => {
+    const old = {version: 1, basemap: 'terrain', ...colors, sandboxLabelColor: '#abcdef', quality: 'fine', sandboxPlacemarks: false, sandboxLabelSize: 24, sandboxLabelHeight: 1.7, terrainPlacemarkMode: 'marker', sandboxPlacemarkMode: 'point', placemarkPointSize: 41, placemarkPointColor: '#aabbcc', placemarkGroupColor: '#123456', placemarkPointRadius: 12, placemarkPointShowCount: false, placemarkPointShowName: true}
+    localStorage.setItem(MAP_SETTINGS_KEY, JSON.stringify(old))
+    const setItem = vi.spyOn(Storage.prototype, 'setItem')
+    const restored = readMapSettings()
+    expect(restored).toMatchObject({routeColor: '#1bb1a7', sandboxConnectorColor: '#ffffff', sandboxMarkerPaletteVersion: 3, sandboxLabelColor: '#abcdef', quality: 'fine', sandboxPlacemarks: false, sandboxLabelSize: 24, sandboxLabelHeight: 1.7, terrainPlacemarkMode: 'marker', sandboxPlacemarkMode: 'point', placemarkPointSize: 41, placemarkPointColor: '#aabbcc', placemarkGroupColor: '#123456', placemarkPointRadius: 12, placemarkPointShowCount: false, placemarkPointShowName: true})
+    expect(JSON.parse(localStorage.getItem(MAP_SETTINGS_KEY)!)).toEqual(restored)
+    expect(setItem).toHaveBeenCalledOnce()
+    expect(setItem).toHaveBeenCalledWith(MAP_SETTINGS_KEY, JSON.stringify(restored))
+    expect(readMapSettings()).toEqual(restored)
+    expect(setItem).toHaveBeenCalledOnce()
+    const laterChoice = writeMapSettings({...restored, routeColor: '#3dc5ff', sandboxConnectorColor: '#3dc5ff'})
+    expect(laterChoice.sandboxMarkerPaletteVersion).toBe(3)
+    expect(readMapSettings()).toEqual(laterChoice)
+    expect(readMapSettings()).toMatchObject({routeColor: '#3dc5ff', sandboxConnectorColor: '#3dc5ff'})
+  })
+  it.each([
+    {routeColor: '#224466', sandboxConnectorColor: '#3dc5ff'},
+    {routeColor: '#3dc5ff', sandboxConnectorColor: '#654321'},
+    {routeColor: '#224466', sandboxConnectorColor: '#654321'},
+    {routeColor: '#3dc5ff', sandboxConnectorColor: '#3dc5ff', sandboxMarkerPaletteVersion: 2},
+    {routeColor: '#224466', sandboxConnectorColor: '#ffb347', sandboxMarkerPaletteVersion: 2},
+    {routeColor: '#3dc5ff', sandboxConnectorColor: '#3dc5ff', sandboxMarkerPaletteVersion: 3},
+    {routeColor: '#3dc5ff', sandboxConnectorColor: '#ffb347', sandboxMarkerPaletteVersion: 3},
+  ])('preserves custom and explicitly chosen matching colors in persisted preferences: %j', colors => {
+    const old = {version: 1, basemap: 'terrain', ...colors}
+    localStorage.setItem(MAP_SETTINGS_KEY, JSON.stringify(old))
+    const setItem = vi.spyOn(Storage.prototype, 'setItem')
+    expect(readMapSettings()).toMatchObject({...colors, sandboxMarkerPaletteVersion: 3})
+    expect(JSON.parse(localStorage.getItem(MAP_SETTINGS_KEY)!)).toEqual(old)
+    expect(setItem).not.toHaveBeenCalled()
+  })
+  it.each([
+    {routeColor: '#3dc5ff', sandboxConnectorColor: '#3dc5ff'},
+    {routeColor: '#3dc5ff', sandboxConnectorColor: '#ffb347'},
+  ])('never migrates previous default color pairs through sanitizing or new writes: %j', colors => {
+    const old = {version: 1, ...colors, sandboxMarkerPaletteVersion: 2}
+    const sanitized = sanitizeMapSettings(old)
+    expect(sanitized).toMatchObject({...colors, sandboxMarkerPaletteVersion: 3})
+    expect(old).toEqual({version: 1, ...colors, sandboxMarkerPaletteVersion: 2})
+    const saved = writeMapSettings(sanitized)
+    expect(readMapSettings()).toEqual(saved)
+    expect(readMapSettings()).toMatchObject(colors)
+    expect(JSON.parse(localStorage.getItem(MAP_SETTINGS_KEY)!)).toEqual(saved)
+  })
+  it('uses the migrated in-memory palette when legacy preference storage refuses the write', () => {
+    const old = {version: 1, basemap: 'terrain', routeColor: '#3dc5ff', sandboxConnectorColor: '#3dc5ff', sandboxLabelColor: '#abcdef'}
+    const storage = {getItem: () => JSON.stringify(old), setItem: vi.fn(() => {throw new Error('denied')})}
+    expect(readMapSettings(storage)).toMatchObject({basemap: 'terrain', routeColor: '#1bb1a7', sandboxConnectorColor: '#ffffff', sandboxLabelColor: '#abcdef', sandboxMarkerPaletteVersion: 3, sandboxLabelHeight: 1})
+    expect(storage.setItem).toHaveBeenCalledOnce()
+    expect(old.routeColor).toBe('#3dc5ff'); expect(old.sandboxConnectorColor).toBe('#3dc5ff')
   })
   it('persists a supported background mode and recovers invalid stored modes without losing colors', () => {
     const sandboxColors = {sides: '#2468ac', background: '#102030'}
@@ -182,6 +388,7 @@ describe('settings dialog and standalone map preferences', () => {
     await render(); await click(button('地图设置'))
     await select(field('地图源').querySelector('select')!, 'osm')
     const latest = {
+      routeColor: '#aabbcc', sandboxLabelColor: '#123456', sandboxLabelSize: 24, sandboxConnectorColor: '#654321',
       exaggeration: 2.7, quality: 'eco' as const, buildings: true,
       lighting: {azimuth: 221, elevation: 68, intensity: 4.2, ambient: 0.9, shadows: false},
       sandboxColors: {sides: '#2468ac', background: '#102030'},

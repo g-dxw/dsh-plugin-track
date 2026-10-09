@@ -5,7 +5,7 @@ import { UPLOADS, API, validateUpload, type TrackInput, type TrackMetrics, type 
 import { listTracks, readSource, readTrack, removeTrack, writeTrack, writeTrackBatch } from './artifacts.ts'
 import { ensureTrackAgentWorkspace, saveTrackAgentSession, writeTrackAgentContext, TrackAgentStoreError } from './track-agent-store.ts'
 
-import { annotationsSaved, readAnnotations, readArtLayout, readArtRouteTransform, writeAnnotations } from './annotations-store.ts'
+import { annotationsSaved, artCanvasSizeSaved, readAnnotations, readArtCanvasSize, readArtLayout, readArtRouteTransform, readArtStyles, writeAnnotations } from './annotations-store.ts'
 import { readPlacemarkOrder, writePlacemarkOrder } from './placemark-order-store.ts'
 import { readPlacemarkEdits, writePlacemarkEdits } from './placemark-edits-store.ts'
 import { readPlacemarkGroups, writePlacemarkGroups } from './placemark-groups-store.ts'
@@ -17,9 +17,13 @@ import { PLACEMARK_PHOTO_MAX_BYTES } from './track/placemark-photos.ts'
 import { preparePlacemarkPhotos, readPlacemarkPhotoAsset, listPlacemarkPhotoAssets } from './placemark-photo-assets-store.ts'
 import { validateRouteContext } from './track/placemark-location.ts'
 import { validatePlacemarks } from './track/placemarks.ts'
-import { loadTextModels, analyzeRoute, generateAnimationScript, TrackAIError, type TrackAIAccount, type TextAIRequest } from './ai.ts'
+import { loadTextModels, loadImagePromptModels, analyzeRoute, generateAnimationScript, TrackAIError, type TrackAIAccount, type TextAIRequest } from './ai.ts'
 import { generateTrackVideoScript } from './video-script-ai.ts'
+import { optimizeImagePrompt, readImagePromptJson } from './image-prompt-ai.ts'
 import type { VideoScriptRequest } from './track/video-script-types.ts'
+import { handleResourceRoute } from './resource-routes.ts'
+import { handleResourceTemplateRoute } from './resource-template-routes.ts'
+import { handleAgentImageReferenceRoute } from './agent-image-reference-routes.ts'
 
 export const name = 'cqai-track'
 // Cordis object-form injection maps service names to intercept configuration;
@@ -43,7 +47,7 @@ export function permitted(req: IncomingMessage): boolean {
   const origin = req.headers.origin
   if (origin && origin !== `http://${req.headers.host}` && origin !== `https://${req.headers.host}`) return false
   if (req.headers['sec-fetch-site'] === 'cross-site') return false
-  return req.method === 'GET' || req.headers['x-cqai-track'] === '1'
+  return req.method === 'GET' || req.method === 'HEAD' || req.headers['x-cqai-track'] === '1'
 }
 
 /**
@@ -149,6 +153,9 @@ export function apply(ctx: Context): void {
         const url = new URL(req.url!, 'http://localhost')
         const action = url.pathname.slice(API.length + 1)
         const id = url.searchParams.get('id') ?? ''
+        if (await handleAgentImageReferenceRoute(req, res, url, {hostOrigin: () => `http://127.0.0.1:${ctx.webServer.port}`})) return
+        if (await handleResourceRoute(req, res, url)) return
+        if (await handleResourceTemplateRoute(req, res, url, action)) return
         if (req.method === 'POST' && action === 'agent-workspace') {
           const body = await readJson(req) as {trackId?: string | null}
           if (!body || typeof body !== 'object' || Array.isArray(body)) throw new TrackAgentStoreError('Agent 工作区请求格式无效')
@@ -196,14 +203,16 @@ export function apply(ctx: Context): void {
           res.end(photo.body)
           return
         }
-        if ((req.method === 'GET' && action === 'text-models') || (req.method === 'POST' && ['analyze','animation-script','video-script'].includes(action))) {
+        if ((req.method === 'GET' && ['text-models','resource-prompt-models'].includes(action)) || (req.method === 'POST' && ['analyze','animation-script','video-script','resource-prompt-optimize'].includes(action))) {
           const account = ctx.get('dsnAccount') as TrackAIAccount | undefined
           const controller = new AbortController()
           const disconnect = () => {if (!res.writableEnded) controller.abort()}
           res.once('close', disconnect)
           try {
             if (action === 'text-models') return json(res, 200, await loadTextModels(account, controller.signal))
-            const body = await readJson(req)
+            if (action === 'resource-prompt-models') return json(res,200,await loadImagePromptModels(account,controller.signal))
+            const body = action === 'resource-prompt-optimize' ? await readImagePromptJson(req) : await readJson(req)
+            if (action === 'resource-prompt-optimize') return json(res,200,await optimizeImagePrompt(account,id,body,controller.signal))
             if (action === 'video-script') {
               try {return json(res, 200, await generateTrackVideoScript(account, body as VideoScriptRequest, controller.signal))}
               catch (error) {
@@ -237,11 +246,11 @@ export function apply(ctx: Context): void {
           if (typeof body?.id !== 'string') throw new Error('缺少轨迹编号')
           return json(res, 200, {state: writePlacemarkState(body.id, body.revision, body.data)})
         }
-        if (req.method === 'GET' && action === 'annotations') return json(res, 200, {annotations: readAnnotations(id), saved: annotationsSaved(id), layout: readArtLayout(id), route: readArtRouteTransform(id)})
+        if (req.method === 'GET' && action === 'annotations') return json(res, 200, {annotations: readAnnotations(id), saved: annotationsSaved(id), layout: readArtLayout(id), route: readArtRouteTransform(id), canvas: readArtCanvasSize(id), canvasSaved: artCanvasSizeSaved(id), styles: readArtStyles(id)})
         if (req.method === 'POST' && action === 'annotations') {
-          const body = await readJson(req) as {id?: unknown; annotations?: unknown; layout?: unknown; route?: unknown}
+          const body = await readJson(req) as {id?: unknown; annotations?: unknown; layout?: unknown; route?: unknown; canvas?: unknown; styles?: unknown}
           if (typeof body?.id !== 'string') throw new Error('缺少轨迹编号')
-          return json(res, 200, {annotations: writeAnnotations(body.id, body.annotations, process.env, body.layout, body.route), layout: readArtLayout(body.id), route: readArtRouteTransform(body.id)})
+          return json(res, 200, {annotations: writeAnnotations(body.id, body.annotations, process.env, body.layout, body.route, body.canvas, body.styles), layout: readArtLayout(body.id), route: readArtRouteTransform(body.id), canvas: readArtCanvasSize(body.id), canvasSaved: artCanvasSizeSaved(body.id), styles: readArtStyles(body.id)})
         }
         if (req.method === 'GET' && action === 'placemark-order') return json(res, 200, {order: readPlacemarkOrder(id)})
         if (req.method === 'POST' && action === 'placemark-order') {
@@ -309,7 +318,7 @@ export function apply(ctx: Context): void {
         }
         json(res, 404, {error: '接口不存在'})
       } catch (error) {
-        if ((error instanceof PlacemarkPhotoError || error instanceof VideoMaterialsError) && error.status === 413) res.setHeader('connection', 'close')
+        if ((error instanceof PlacemarkPhotoError || error instanceof VideoMaterialsError || error instanceof TrackAIError) && error.status === 413) res.setHeader('connection', 'close')
         if (!res.headersSent && !res.destroyed) json(res, error instanceof TrackAIError || error instanceof PlacemarkStateConflictError || error instanceof PlacemarkPhotoError || error instanceof GeoMotionProjectError || error instanceof VideoMaterialsError || error instanceof TrackAgentStoreError ? error.status : 400, {error: error instanceof Error ? error.message : '操作失败'})
       }
     }})

@@ -109,13 +109,13 @@ describe('native track Agent project workspaces', () => {
     const library = ensureTrackAgentWorkspace(env)
     const libraryContext = readFileSync(join(library.path, 'track-context.json'), 'utf8')
     const first = ensureTrackAgentWorkspace(env, id)
-    for (const page of ['overview', 'edit', 'edit', 'animation', 'video-script']) {
+    for (const page of ['overview', 'edit', 'resources', 'image-create', 'image-history']) {
       writeTrackAgentContext({page, trackId: id}, env)
       expect(snapshot(id)).toMatchObject({current: {page, trackId: id, track: {name: '武功山反穿', points: 2}}})
     }
     expect(snapshot(id).current.track.coordinates).toBeUndefined()
     expect(ensureTrackAgentWorkspace(env, id).path).toBe(first.path)
-    expect(snapshot(id).current.pageTitle).toBe('镜头案例与脚本')
+    expect(snapshot(id).current.pageTitle).toBe('AI 图片历史')
     expect(readFileSync(join(library.path, 'track-context.json'), 'utf8')).toBe(libraryContext)
     expect(readFileSync(join(directory, 'track.json'), 'utf8')).toBe(original)
     expect(readFileSync(join(directory, 'source.gpx'), 'utf8')).toBe('<gpx>original</gpx>')
@@ -170,7 +170,7 @@ describe('native track Agent project workspaces', () => {
     const first = ensureTrackAgentWorkspace(env, id)
     writeFileSync(join(first.path, 'AGENTS.md'), 'user instructions')
     writeFileSync(join(first.path, 'draft.md'), 'user draft')
-    writeTrackAgentContext({page: 'edit', trackId: id}, env)
+    writeTrackAgentContext({page: 'resources', trackId: id}, env)
     ensureTrackAgentWorkspace(env, id)
     expect(readFileSync(join(first.path, 'AGENTS.md'), 'utf8')).toBe('user instructions')
     expect(readFileSync(join(first.path, 'draft.md'), 'utf8')).toBe('user draft')
@@ -208,7 +208,7 @@ describe('native track Agent project workspaces', () => {
     }
     expect(() => ensureTrackAgentWorkspace(env, 'missing')).toThrow('Agent 轨迹不存在或已删除')
     expect(() => saveTrackAgentSession('valid-session', env, 'missing')).toThrow('Agent 轨迹不存在或已删除')
-    expect(() => writeTrackAgentContext({page: 'edit', trackId: 'missing'}, env)).toThrow('Agent 轨迹不存在或已删除')
+    expect(() => writeTrackAgentContext({page: 'resources', trackId: 'missing'}, env)).toThrow('Agent 轨迹不存在或已删除')
     expect(existsSync(join(env.DSH_HOME!, 'track-agent'))).toBe(false)
   })
 })

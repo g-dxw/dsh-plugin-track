@@ -5,7 +5,7 @@ import { Line2 } from 'three/addons/lines/Line2.js'
 import { TRACK_COLOR } from '../src/track/trail-layer.ts'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SandboxRenderer } from '../src/track/sandbox/renderer.ts'
-import { DEFAULT_SANDBOX_COLORS, DEFAULT_SANDBOX_LIGHTING } from '../src/track/map-settings.ts'
+import { DEFAULT_MAP_SETTINGS, DEFAULT_SANDBOX_COLORS, DEFAULT_SANDBOX_LIGHTING, sanitizeSandboxLabelHeight } from '../src/track/map-settings.ts'
 import { sceneHeight, triangleElevation, terrainModel } from '../src/track/sandbox/geometry.ts'
 import type { TerrainGrid } from '../src/track/sandbox/types.ts'
 import { createSandboxPanorama } from '../src/track/sandbox/environment.ts'
@@ -75,6 +75,8 @@ const terrain: TerrainGrid = {
 const resize = {observe: vi.fn(), disconnect: vi.fn()}
 let frames: FrameRequestCallback[] = []
 let resizeCallback: ResizeObserverCallback | null = null
+let labelPaints = new WeakMap<HTMLCanvasElement, {texts: string[]; colors: string[]}>()
+let labelFonts = new WeakMap<HTMLCanvasElement, string[]>()
 const animation = vi.fn((callback: FrameRequestCallback) => {
   frames.push(callback)
   return frames.length
@@ -89,6 +91,27 @@ beforeEach(() => {
   pmrem.targets = []
   webgl.instances = []
   webgl.getMaxAnisotropy.mockImplementation(() => 16)
+  labelPaints = new WeakMap()
+  labelFonts = new WeakMap()
+  // Keep real Three textures and materials; jsdom only needs a local drawing context.
+  vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(function(this: HTMLCanvasElement, kind: string) {
+    if (kind !== '2d') return null
+    const paint = {texts: [] as string[], colors: [] as string[]}
+    labelPaints.set(this, paint)
+    const fonts: string[] = []; labelFonts.set(this, fonts)
+    return {
+      canvas: this, font: '', fillStyle: '#000000', strokeStyle: '#000000', lineWidth: 1,
+      textAlign: 'start', textBaseline: 'alphabetic', lineJoin: 'miter',
+      measureText: vi.fn(function(this: CanvasRenderingContext2D, text: string) {
+        const size = Number(this.font.match(/(\d+)px/)?.[1] ?? 16)
+        return {width: Array.from(text).length * size}
+      }),
+      scale: vi.fn(), clearRect: vi.fn(), strokeText: vi.fn(),
+      fillText: vi.fn(function(this: CanvasRenderingContext2D, text: string) {
+        paint.texts.push(text); paint.colors.push(String(this.fillStyle)); fonts.push(this.font)
+      }),
+    } as unknown as CanvasRenderingContext2D
+  } as typeof HTMLCanvasElement.prototype.getContext)
   vi.stubGlobal('requestAnimationFrame', animation)
   vi.stubGlobal('cancelAnimationFrame', cancel)
   vi.stubGlobal('ResizeObserver', class {
@@ -123,8 +146,8 @@ function drawFrame(): {scene: THREE.Scene; camera: THREE.PerspectiveCamera} {
 function watchDisposal(scene: THREE.Scene): (() => void)[] {
   const resources = new Set<THREE.BufferGeometry | THREE.Material | THREE.Texture>()
   scene.traverse(object => {
-    if (!(object instanceof THREE.Mesh)) return
-    resources.add(object.geometry)
+    if (!(object instanceof THREE.Mesh) && !(object instanceof THREE.Sprite)) return
+    if (object instanceof THREE.Mesh) resources.add(object.geometry)
     for (const material of Array.isArray(object.material) ? object.material : [object.material]) {
       resources.add(material)
       const texture = (material as THREE.MeshStandardMaterial).map
@@ -136,6 +159,60 @@ function watchDisposal(scene: THREE.Scene): (() => void)[] {
     resource.addEventListener('dispose', listener)
     return listener
   })
+}
+
+
+function placemarkVisuals(scene: THREE.Scene, id: string) {
+  const group = scene.getObjectByName('sandbox-placemarks') as THREE.Group
+  expect(group).toBeInstanceOf(THREE.Group)
+  const node = group.children.find(child => child.userData.id === id) as THREE.Group
+  expect(node).toBeInstanceOf(THREE.Group)
+  const sphere = node.getObjectByName('placemark-anchor') as THREE.Mesh<THREE.SphereGeometry, THREE.MeshBasicMaterial>
+  const connector = node.getObjectByName('placemark-connector') as Line2
+  const label = node.getObjectByName('placemark-label') as THREE.Sprite
+  expect(sphere).toBeInstanceOf(THREE.Mesh)
+  expect(connector).toBeInstanceOf(Line2)
+  expect(label).toBeInstanceOf(THREE.Sprite)
+  return {group, node, sphere, connector, label}
+}
+
+function connectorEnds(connector: Line2): THREE.Vector3[] {
+  connector.updateWorldMatrix(true, false)
+  return ['instanceStart', 'instanceEnd'].map(name => {
+    const attribute = connector.geometry.getAttribute(name)
+    return new THREE.Vector3(attribute.getX(0), attribute.getY(0), attribute.getZ(0)).applyMatrix4(connector.matrixWorld)
+  })
+}
+
+function terrainSurface(scene: THREE.Scene): THREE.Mesh {
+  const surface = scene.children.find(object => object instanceof THREE.Mesh && object.material instanceof THREE.MeshStandardMaterial) as THREE.Mesh
+  expect(surface).toBeInstanceOf(THREE.Mesh)
+  return surface
+}
+
+// Use real Three triangle intersections as an independent check of the DEM fixture.
+function meshBlocksPoint(surface: THREE.Mesh, origin: THREE.Vector3, point: THREE.Vector3): boolean {
+  surface.updateWorldMatrix(true, false)
+  const direction = point.clone().sub(origin), distance = direction.length()
+  const ray = new THREE.Raycaster(origin, direction.normalize(), 0, Math.max(0, distance - .001))
+  return ray.intersectObject(surface, false).length > 0
+}
+
+function projectedDiameter(sphere: THREE.Mesh<THREE.SphereGeometry>, camera: THREE.PerspectiveCamera, width: number): number {
+  camera.updateMatrixWorld(); sphere.updateWorldMatrix(true, false)
+  const center = sphere.getWorldPosition(new THREE.Vector3())
+  const radius = sphere.geometry.parameters.radius * sphere.getWorldScale(new THREE.Vector3()).x
+  const right = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0).multiplyScalar(radius)
+  const a = center.clone().sub(right).project(camera), b = center.clone().add(right).project(camera)
+  return (b.x - a.x) * width / 2
+}
+
+function projectedLabelHeight(label: THREE.Sprite, camera: THREE.PerspectiveCamera, height: number): number {
+  camera.updateMatrixWorld(); label.updateWorldMatrix(true, false)
+  const bottom = label.getWorldPosition(new THREE.Vector3())
+  const up = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 1).multiplyScalar(label.getWorldScale(new THREE.Vector3()).y)
+  const a = bottom.clone().project(camera), b = bottom.add(up).project(camera)
+  return (b.y - a.y) * height / 2
 }
 
 describe('sandbox renderer lifetime', () => {
@@ -486,12 +563,15 @@ describe('sandbox spherical environment', () => {
 })
 
 describe('sandbox placemark projection and interaction', () => {
-  it('anchors numbered groups on actual terrain triangles and skips invalid or outside coordinates', () => {
+  it('renders group names above actual terrain anchors and skips invalid or outside coordinates', () => {
     const holder = container()
     const sandbox = new SandboxRenderer(holder)
     const hills = {...terrain, elevations: [0, 200, 100, 800]}
     sandbox.build(hills, [], null, {exaggeration: 2})
-    const {camera} = drawFrame()
+    const {scene, camera} = drawFrame()
+    // This test isolates projection from the steep southeast slope's valid occlusion.
+    sandbox.setInteractionEnabled(false)
+    sandbox.applyCameraState({position: [0, 5000, 1000], target: [0, terrainModel(hills, 2).topHeight / 2, 0], fov: 38})
     const coordinates = gridCoordinate(0.7, 0.6, hills)
     sandbox.updatePlacemarks([
       {id: 'group', coordinates, label: 'G7', title: '山顶', groupCount: 3},
@@ -505,16 +585,51 @@ describe('sandbox placemark projection and interaction', () => {
     expect(button.hidden).toBe(false)
     expect(button.tagName).toBe('BUTTON')
     expect(button.type).toBe('button')
-    expect(button.style.width).toBe('44px')
-    expect(button.style.height).toBe('44px')
-    expect(button.querySelector('.trk-sandbox-placemark-dot')?.textContent).toBe('G7')
-    expect(button.querySelector('.trk-sandbox-placemark-count')?.textContent).toBe('3')
+    expect(parseFloat(button.style.width)).toBeGreaterThanOrEqual(44)
+    expect(parseFloat(button.style.height)).toBeGreaterThanOrEqual(44)
+    expect(button.textContent).toBe('山顶')
+    expect(button.style.color).toBe('transparent')
+    expect(button.style.backgroundColor).toBe('transparent')
+    expect(button.querySelector('.trk-sandbox-placemark-dot')).toBeNull()
+    expect(button.querySelector('.trk-sandbox-placemark-count')).toBeNull()
     expect(button.getAttribute('aria-label')).toBe('标记组 G7：山顶，3 个子点')
     expect(button.getAttribute('aria-pressed')).toBe('true')
     const {x, z} = terrainPosition(...coordinates, hills)
     // Lower-right triangle is b/c/d, not the bilinear average of all four heights.
     const elevation = 800 + (100 - 800) * (1 - 0.7) + (200 - 800) * (1 - 0.6)
-    const projection = new THREE.Vector3(x, sceneHeight(elevation, terrainModel(hills, 2)), z).project(camera)
+    const model = terrainModel(hills, 2), span = Math.max(hills.widthMeters, hills.depthMeters)
+    const {group, node, sphere, connector, label} = placemarkVisuals(scene, 'group')
+    expect(group.children).toEqual([node])
+    const anchor = sphere.getWorldPosition(new THREE.Vector3()), head = label.getWorldPosition(new THREE.Vector3())
+    expect(anchor.x).toBeCloseTo(x, 6); expect(anchor.z).toBeCloseTo(z, 6)
+    expect(anchor.y).toBeCloseTo(sceneHeight(elevation, model) + Math.max(.2, span * .001), 6)
+    expect(head.x).toBe(anchor.x); expect(head.z).toBe(anchor.z)
+    expect(head.y - anchor.y).toBeCloseTo(Math.max(5, span * .09, model.topHeight * .12), 6)
+    const ends = connectorEnds(connector)
+    expect(ends[0].distanceTo(anchor)).toBeLessThan(.001)
+    expect(ends[1].distanceTo(head)).toBeLessThan(.001)
+    expect(connector.geometry.getAttribute('instanceDistanceStart').getX(0)).toBe(0)
+    expect(connector.geometry.getAttribute('instanceDistanceEnd').getX(0)).toBeCloseTo(head.y - anchor.y, 3)
+    expect(connector.material.dashed).toBe(true)
+    expect(connector.material.worldUnits).toBe(false)
+    expect(connector.material.linewidth).toBe(1.5)
+    expect(connector.material.resolution.toArray()).toEqual([900, 600])
+    expect(sphere.geometry).toBeInstanceOf(THREE.SphereGeometry)
+    expect(sphere.material).toBeInstanceOf(THREE.MeshBasicMaterial)
+    expect(sphere.material.color.getHexString()).toBe(DEFAULT_MAP_SETTINGS.sandboxConnectorColor.slice(1))
+    expect(connector.material.color.getHexString()).toBe(sphere.material.color.getHexString())
+    expect(sphere.material.toneMapped).toBe(false)
+    expect(connector.material.toneMapped).toBe(false)
+    expect(sphere.material.depthTest).toBe(true); expect(sphere.material.depthWrite).toBe(false)
+    expect(connector.material.depthTest).toBe(true); expect(connector.material.depthWrite).toBe(false)
+    expect(label.material.map).toBeInstanceOf(THREE.CanvasTexture)
+    expect(label.material.map!.colorSpace).toBe(THREE.SRGBColorSpace)
+    expect(label.center.toArray()).toEqual([.5, 0])
+    expect(label.material.depthTest).toBe(true)
+    expect(label.material.depthWrite).toBe(false)
+    expect(labelPaints.get(label.material.map!.image as HTMLCanvasElement)).toEqual({texts: ['山顶'], colors: ['#ffffff']})
+    expect(projectedDiameter(sphere, camera, 900)).toBeCloseTo(7, 6)
+    const projection = head.clone().project(camera)
     expect(parseFloat(button.style.left)).toBeCloseTo((projection.x + 1) * 450, 6)
     expect(parseFloat(button.style.top)).toBeCloseTo((1 - projection.y) * 300, 6)
     sandbox.dispose()
@@ -526,12 +641,17 @@ describe('sandbox placemark projection and interaction', () => {
     const sandbox = new SandboxRenderer(holder)
     sandbox.build(terrain, [], null)
     const {scene, camera} = drawFrame()
-    const meshes = [...scene.children]
+    const terrainChildren = [...scene.children]
     const resources = watchDisposal(scene)
     const position = camera.position.clone()
     const markers = [{id: 'one', coordinates: gridCoordinate(0.7, 0.5, terrain), label: '12', title: '观景台'}]
     const firstCallback = vi.fn(), latestCallback = vi.fn(), bubbled = vi.fn()
     sandbox.updatePlacemarks(markers, {onSelect: firstCallback})
+    const meshes = [...scene.children]
+    expect(meshes.filter(object => object.name !== 'sandbox-placemarks')).toEqual(terrainChildren)
+    const visual = placemarkVisuals(scene, 'one'), texture = visual.label.material.map
+    const linePositions = visual.connector.geometry.getAttribute('instanceStart')
+    const lineDistances = visual.connector.geometry.getAttribute('instanceDistanceEnd')
     const button = holder.querySelector<HTMLButtonElement>('[data-sandbox-placemark="one"]')!
     holder.addEventListener('pointerdown', bubbled)
     button.dispatchEvent(new Event('pointerdown', {bubbles: true}))
@@ -540,6 +660,8 @@ describe('sandbox placemark projection and interaction', () => {
     expect(firstCallback).toHaveBeenCalledWith('one')
     sandbox.updatePlacemarks(markers, {visible: false, onSelect: latestCallback})
     expect(button.hidden).toBe(true)
+    expect(visual.group.visible).toBe(false)
+    expect(visual.node.visible).toBe(false)
     expect(holder.querySelector('.trk-sandbox-placemarks')?.getAttribute('hidden')).not.toBeNull()
     button.click()
     expect(latestCallback).not.toHaveBeenCalled()
@@ -547,6 +669,15 @@ describe('sandbox placemark projection and interaction', () => {
     expect(holder.querySelector('[data-sandbox-placemark="one"]')).toBe(button)
     expect(button.hidden).toBe(false)
     expect(button.getAttribute('aria-pressed')).toBe('true')
+    expect(visual.group.visible).toBe(true); expect(visual.node.visible).toBe(true)
+    expect(visual.label.material.map).toBe(texture)
+    expect(visual.connector.geometry.getAttribute('instanceStart')).toBe(linePositions)
+    expect(visual.connector.geometry.getAttribute('instanceDistanceEnd')).toBe(lineDistances)
+    button.focus(); expect(document.activeElement).toBe(button)
+    const keyBubbled = vi.fn(); holder.addEventListener('keydown', keyBubbled)
+    button.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', bubbles: true}))
+    button.dispatchEvent(new KeyboardEvent('keydown', {key: ' ', bubbles: true}))
+    expect(keyBubbled).not.toHaveBeenCalled()
     button.click()
     expect(latestCallback).toHaveBeenCalledWith('one')
     expect(firstCallback).toHaveBeenCalledTimes(1)
@@ -598,7 +729,7 @@ describe('sandbox placemark projection and interaction', () => {
     const holder = container()
     const sandbox = new SandboxRenderer(holder)
     sandbox.build(terrain, [], null)
-    const {camera} = drawFrame()
+    const {scene, camera} = drawFrame()
     const coordinates = gridCoordinate(0.85, 0.2, terrain)
     sandbox.updatePlacemarks([{id: 'ridge', coordinates, label: '21'}])
     const button = holder.querySelector<HTMLButtonElement>('[data-sandbox-placemark="ridge"]')!
@@ -616,13 +747,333 @@ describe('sandbox placemark projection and interaction', () => {
     const {x, z} = terrainPosition(...coordinates, terrain)
     const elevation = 100 + (300 - 100) * 0.85 + (200 - 100) * 0.2
     // This point is in b/c/d; the grid is planar here, so either face agrees.
-    const projection = new THREE.Vector3(x, sceneHeight(elevation, terrainModel(terrain)), z).project(camera)
+    const model = terrainModel(terrain), span = Math.max(terrain.widthMeters, terrain.depthMeters)
+    const projection = new THREE.Vector3(x, sceneHeight(elevation, model) + Math.max(.2, span * .001)
+      + Math.max(5, span * .09, model.topHeight * .12), z).project(camera)
+    const {sphere, connector} = placemarkVisuals(scene, 'ridge')
+    expect(projectedDiameter(sphere, camera, 600)).toBeCloseTo(7, 6)
+    expect(connector.material.resolution.toArray()).toEqual([600, 400])
     expect(parseFloat(button.style.left)).toBeCloseTo((projection.x + 1) * 300, 6)
     expect(parseFloat(button.style.top)).toBeCloseTo((1 - projection.y) * 200, 6)
     expect(holder.querySelector('[data-sandbox-placemark="ridge"]')).toBe(button)
     expect(webgl.setSize).toHaveBeenLastCalledWith(600, 400, false)
     sandbox.dispose()
     holder.remove()
+  })
+
+  it('updates label, connector and route colors independently while reusing geometry, materials, camera and capture', () => {
+    const holder = container(), sandbox = new SandboxRenderer(holder)
+    const points: import('../src/protocol.ts').TrackPoint[] = [[120, 30.02, null, null], [120.02, 30, null, null]]
+    sandbox.build(terrain, points, null, {routeColor: '#112233'})
+    const {scene, camera} = drawFrame(), terrainResources = watchDisposal(scene)
+    const marker = {id: 'one', coordinates: gridCoordinate(.55, .5, terrain), label: '8', title: '林间营地'}
+    sandbox.updatePlacemarks([marker], {labelColor: '#abcdef', connectorColor: '#aabbcc'})
+    const parts = placemarkVisuals(scene, 'one'), button = holder.querySelector<HTMLButtonElement>('[data-sandbox-placemark="one"]')!
+    const capture = sandbox.getCaptureCanvas(), position = camera.position.clone(), quaternion = camera.quaternion.clone()
+    const route = scene.children.find(object => object instanceof Line2) as Line2
+    const sphereGeometry = parts.sphere.geometry, lineGeometry = parts.connector.geometry
+    const linePositions = lineGeometry.getAttribute('instanceStart'), lineDistances = lineGeometry.getAttribute('instanceDistanceEnd')
+    const sphereMaterial = parts.sphere.material, lineMaterial = parts.connector.material, labelMaterial = parts.label.material
+    const firstTexture = labelMaterial.map!, firstDisposed = vi.fn()
+    firstTexture.addEventListener('dispose', firstDisposed)
+    expect(labelPaints.get(firstTexture.image as HTMLCanvasElement)).toEqual({texts: ['林间营地'], colors: ['#abcdef']})
+    expect(sphereMaterial.color.getHexString()).toBe('aabbcc')
+    expect(lineMaterial.color.getHexString()).toBe('aabbcc')
+    expect(route.material.color.getHexString()).toBe('112233')
+
+    sandbox.updatePlacemarks([marker], {selectedId: 'one', labelColor: '#abcdef', connectorColor: '#123456'})
+    expect(placemarkVisuals(scene, 'one').node).toBe(parts.node)
+    expect(parts.sphere.geometry).toBe(sphereGeometry); expect(parts.connector.geometry).toBe(lineGeometry)
+    expect(lineGeometry.getAttribute('instanceStart')).toBe(linePositions)
+    expect(lineGeometry.getAttribute('instanceDistanceEnd')).toBe(lineDistances)
+    expect(parts.sphere.material).toBe(sphereMaterial); expect(parts.connector.material).toBe(lineMaterial)
+    expect(parts.label.material).toBe(labelMaterial); expect(labelMaterial.map).toBe(firstTexture)
+    expect(firstDisposed).not.toHaveBeenCalled()
+    expect(sphereMaterial.color.getHexString()).toBe('123456'); expect(lineMaterial.color.getHexString()).toBe('123456')
+    expect(route.material.color.getHexString()).toBe('112233')
+
+    sandbox.updatePlacemarks([marker], {labelColor: '#fedcba', connectorColor: '#123456'})
+    const secondTexture = labelMaterial.map!, secondDisposed = vi.fn()
+    secondTexture.addEventListener('dispose', secondDisposed)
+    expect(secondTexture).not.toBe(firstTexture); expect(firstDisposed).toHaveBeenCalledTimes(1)
+    expect(labelPaints.get(secondTexture.image as HTMLCanvasElement)).toEqual({texts: ['林间营地'], colors: ['#fedcba']})
+    expect(lineGeometry.getAttribute('instanceStart')).toBe(linePositions)
+    sandbox.updateRouteColor('#778899')
+    expect(route.material.color.getHexString()).toBe('778899')
+    expect(sphereMaterial.color.getHexString()).toBe('123456'); expect(labelMaterial.map).toBe(secondTexture)
+
+    sandbox.updatePlacemarks([{...marker, title: '新的营地名称'}], {labelColor: '#fedcba', connectorColor: '#123456'})
+    const renamedTexture = labelMaterial.map!, renamedDisposed = vi.fn()
+    renamedTexture.addEventListener('dispose', renamedDisposed)
+    expect(secondDisposed).toHaveBeenCalledTimes(1)
+    expect(button.textContent).toBe('新的营地名称')
+    expect(button.title).toBe('新的营地名称')
+    expect(labelPaints.get(renamedTexture.image as HTMLCanvasElement)?.texts).toEqual(['新的营地名称'])
+    const moved = {...marker, title: '新的营地名称', coordinates: gridCoordinate(.7, .6, terrain)}
+    const originalAnchor = parts.sphere.position.clone()
+    sandbox.updatePlacemarks([moved], {labelColor: '#fedcba', connectorColor: '#123456'})
+    expect(parts.sphere.position.distanceTo(originalAnchor)).toBeGreaterThan(1)
+    expect(labelMaterial.map).toBe(renamedTexture)
+    const ends = connectorEnds(parts.connector), head = parts.label.getWorldPosition(new THREE.Vector3())
+    expect(ends[0].distanceTo(parts.sphere.getWorldPosition(new THREE.Vector3()))).toBeLessThan(.001)
+    expect(ends[1].distanceTo(head)).toBeLessThan(.001)
+    expect(camera.position.distanceTo(position)).toBeLessThan(1e-7)
+    expect(camera.quaternion.angleTo(quaternion)).toBeLessThan(1e-7)
+    expect(sandbox.getCaptureCanvas()).toBe(capture)
+    for (const listener of terrainResources) expect(listener).not.toHaveBeenCalled()
+    sandbox.dispose()
+    expect(firstDisposed).toHaveBeenCalledTimes(1); expect(secondDisposed).toHaveBeenCalledTimes(1)
+    expect(renamedDisposed).toHaveBeenCalledTimes(1)
+    holder.remove()
+  })
+
+  it('updates text size and hit bounds while retaining anchors, connector geometry, spheres, camera and unrelated textures', () => {
+    const holder = container(), sandbox = new SandboxRenderer(holder)
+    sandbox.build(terrain, [], null)
+    const {scene, camera} = drawFrame(), terrainResources = watchDisposal(scene)
+    const markers = [{id: 'font', coordinates: gridCoordinate(.5, .5, terrain), label: '3', title: '沿途文字设置'}]
+    sandbox.updatePlacemarks(markers)
+    const parts = placemarkVisuals(scene, 'font'), button = holder.querySelector<HTMLButtonElement>('[data-sandbox-placemark="font"]')!
+    const texture = parts.label.material.map!, firstDisposed = vi.fn()
+    texture.addEventListener('dispose', firstDisposed)
+    const canvas = texture.image as HTMLCanvasElement
+    expect(labelFonts.get(canvas)?.[0]).toMatch(/^600 16px /)
+    const width = parseFloat(button.style.width), height = parseFloat(button.style.height)
+    const firstLabelHeight = projectedLabelHeight(parts.label, camera, 600)
+    const original = {anchor: parts.sphere.position.clone(), head: parts.label.position.clone(), sphere: parts.sphere,
+      sphereGeometry: parts.sphere.geometry, sphereMaterial: parts.sphere.material, lineGeometry: parts.connector.geometry,
+      linePositions: parts.connector.geometry.getAttribute('instanceStart'), lineDistances: parts.connector.geometry.getAttribute('instanceDistanceEnd'),
+      labelMaterial: parts.label.material, position: camera.position.clone(), direction: camera.quaternion.clone(), capture: sandbox.getCaptureCanvas()}
+    sandbox.updatePlacemarks(markers, {labelSize: 32})
+    const largeTexture = parts.label.material.map!, largeDisposed = vi.fn()
+    largeTexture.addEventListener('dispose', largeDisposed)
+    const largeCanvas = largeTexture.image as HTMLCanvasElement
+    expect(largeTexture).not.toBe(texture); expect(firstDisposed).toHaveBeenCalledTimes(1)
+    expect(labelFonts.get(largeCanvas)?.[0]).toMatch(/^600 32px /)
+    expect(largeCanvas.width).toBeGreaterThan(canvas.width); expect(largeCanvas.height).toBeGreaterThan(canvas.height)
+    expect(parseFloat(button.style.width)).toBeGreaterThan(width)
+    expect(parseFloat(button.style.height)).toBeGreaterThan(height)
+    expect(projectedLabelHeight(parts.label, camera, 600)).toBeGreaterThan(firstLabelHeight)
+    expect(projectedLabelHeight(parts.label, camera, 600)).toBeCloseTo(largeCanvas.height / 2, 6)
+    expect(parts.sphere).toBe(original.sphere); expect(parts.sphere.geometry).toBe(original.sphereGeometry)
+    expect(parts.sphere.material).toBe(original.sphereMaterial); expect(parts.connector.geometry).toBe(original.lineGeometry)
+    expect(parts.connector.geometry.getAttribute('instanceStart')).toBe(original.linePositions)
+    expect(parts.connector.geometry.getAttribute('instanceDistanceEnd')).toBe(original.lineDistances)
+    expect(parts.label.material).toBe(original.labelMaterial)
+    expect(parts.sphere.position.equals(original.anchor)).toBe(true); expect(parts.label.position.equals(original.head)).toBe(true)
+    expect(projectedDiameter(parts.sphere, camera, 900)).toBeCloseTo(7, 6)
+    expect(camera.position.distanceTo(original.position)).toBeLessThan(1e-7)
+    expect(camera.quaternion.angleTo(original.direction)).toBeLessThan(1e-7)
+    expect(sandbox.getCaptureCanvas()).toBe(original.capture)
+    sandbox.updatePlacemarks(markers, {labelSize: 32, selectedId: 'font', connectorColor: '#123456'})
+    sandbox.updatePlacemarks(markers, {labelSize: 32, visible: false, connectorColor: '#123456'})
+    sandbox.updatePlacemarks(markers, {labelSize: 32, visible: true, connectorColor: '#123456'})
+    expect(parts.label.material.map).toBe(largeTexture); expect(largeDisposed).not.toHaveBeenCalled()
+    expect(parts.connector.geometry.getAttribute('instanceStart')).toBe(original.linePositions)
+    expect(holder.querySelector('[data-sandbox-placemark="font"]')).toBe(button)
+    Object.defineProperties(holder, {clientWidth: {value: 600}, clientHeight: {value: 400}})
+    resizeCallback!([], {} as ResizeObserver); sandbox.renderFrame()
+    expect(parts.label.material.map).toBe(largeTexture)
+    expect(projectedLabelHeight(parts.label, camera, 400)).toBeCloseTo(largeCanvas.height / 2, 6)
+    expect(projectedDiameter(parts.sphere, camera, 600)).toBeCloseTo(7, 6)
+    expect(parseFloat(button.style.width)).toBe(largeCanvas.width / 2)
+    expect(parseFloat(button.style.height)).toBe(largeCanvas.height / 2)
+    for (const listener of terrainResources) expect(listener).not.toHaveBeenCalled()
+    sandbox.dispose()
+    expect(firstDisposed).toHaveBeenCalledTimes(1); expect(largeDisposed).toHaveBeenCalledTimes(1)
+    holder.remove()
+  })
+
+  it.each([
+    [undefined, 16], [NaN, 16], [Infinity, 16], [-Infinity, 16], [9, 10], [33, 32], [19.6, 20], [10, 10], [32, 32],
+  ])('normalizes label size %s to %s pixels and reuses the normalized texture', (size, expected) => {
+    const holder = container(), sandbox = new SandboxRenderer(holder)
+    sandbox.build(terrain, [], null)
+    const {scene, camera} = drawFrame()
+    const markers = [{id: 'size', coordinates: gridCoordinate(.5, .5, terrain), label: '1', title: '短名'}]
+    sandbox.updatePlacemarks(markers, {labelSize: size})
+    const parts = placemarkVisuals(scene, 'size'), texture = parts.label.material.map!
+    const canvas = texture.image as HTMLCanvasElement
+    expect(labelFonts.get(canvas)?.[0]).toMatch(new RegExp('^600 ' + expected + 'px '))
+    const button = holder.querySelector<HTMLButtonElement>('[data-sandbox-placemark="size"]')!
+    expect(parseFloat(button.style.width)).toBeGreaterThanOrEqual(44)
+    expect(parseFloat(button.style.height)).toBeGreaterThanOrEqual(44)
+    expect(projectedLabelHeight(parts.label, camera, 600)).toBeCloseTo(canvas.height / 2, 6)
+    expect(projectedDiameter(parts.sphere, camera, 900)).toBeCloseTo(7, 6)
+    sandbox.updatePlacemarks(markers, {labelSize: expected, selectedId: 'size'})
+    expect(parts.label.material.map).toBe(texture)
+    sandbox.dispose(); holder.remove()
+  })
+
+  it('changes floating height and dash distances in place while preserving ground anchors, screen sizes, terrain and camera', () => {
+    const holder = container(), sandbox = new SandboxRenderer(holder)
+    sandbox.build(terrain, [], document.createElement('canvas')); sandbox.setInteractionEnabled(false)
+    const {scene, camera} = drawFrame()
+    const markers = [{id: 'height', coordinates: gridCoordinate(.5, .5, terrain), label: '3', title: 'Floating label'}]
+    sandbox.updatePlacemarks(markers, {labelSize: 24})
+    const parts = placemarkVisuals(scene, 'height'), surface = terrainSurface(scene)
+    const button = holder.querySelector<HTMLButtonElement>('[data-sandbox-placemark="height"]')!
+    const original = {anchor: parts.sphere.position.clone(), head: parts.label.position.clone(), scale: parts.sphere.scale.clone(),
+      sphereGeometry: parts.sphere.geometry, sphereMaterial: parts.sphere.material, lineGeometry: parts.connector.geometry,
+      linePositions: parts.connector.geometry.getAttribute('instanceStart'), lineMaterial: parts.connector.material,
+      texture: parts.label.material.map!, labelMaterial: parts.label.material, terrainGeometry: surface.geometry,
+      terrainMaterial: surface.material, position: camera.position.clone(), direction: camera.quaternion.clone(),
+      projection: camera.projectionMatrix.clone(), capture: sandbox.getCaptureCanvas()}
+    const disposals = watchDisposal(scene)
+    const automaticHeight = original.head.y - original.anchor.y
+    expect(automaticHeight).toBeGreaterThan(0)
+    const pixelHeight = projectedLabelHeight(parts.label, camera, 600)
+    const checkHeight = (factor: number, width = 900, height = 600) => {
+      const expectedHeight = automaticHeight * factor, [start, end] = connectorEnds(parts.connector)
+      expect(parts.label.position.x).toBe(original.anchor.x); expect(parts.label.position.z).toBe(original.anchor.z)
+      expect(parts.label.position.y).toBeCloseTo(original.anchor.y + expectedHeight, 6)
+      expect(start.distanceTo(original.anchor)).toBeLessThan(.001)
+      expect(end.distanceTo(parts.label.position)).toBeLessThan(.001)
+      expect(end.y - start.y).toBeCloseTo(expectedHeight, 3)
+      expect(parts.connector.geometry.getAttribute('instanceDistanceStart').getX(0)).toBe(0)
+      expect(parts.connector.geometry.getAttribute('instanceDistanceEnd').getX(0)).toBeCloseTo(expectedHeight, 3)
+      expect(parts.sphere.position.equals(original.anchor)).toBe(true)
+      expect(parts.sphere.geometry).toBe(original.sphereGeometry); expect(parts.sphere.material).toBe(original.sphereMaterial)
+      expect(parts.connector.geometry).toBe(original.lineGeometry); expect(parts.connector.material).toBe(original.lineMaterial)
+      expect(parts.connector.geometry.getAttribute('instanceStart')).toBe(original.linePositions)
+      expect(parts.label.material).toBe(original.labelMaterial); expect(parts.label.material.map).toBe(original.texture)
+      expect(surface.geometry).toBe(original.terrainGeometry); expect(surface.material).toBe(original.terrainMaterial)
+      expect(camera.position.equals(original.position)).toBe(true); expect(camera.quaternion.equals(original.direction)).toBe(true)
+      expect(sandbox.getCaptureCanvas()).toBe(original.capture)
+      expect(projectedDiameter(parts.sphere, camera, width)).toBeCloseTo(7, 6)
+      expect(projectedLabelHeight(parts.label, camera, height)).toBeCloseTo(pixelHeight, 6)
+      for (const material of [parts.sphere.material, parts.connector.material, parts.label.material]) {
+        expect(material.depthTest).toBe(true); expect(material.depthWrite).toBe(false)
+      }
+      for (const listener of disposals) expect(listener).not.toHaveBeenCalled()
+    }
+    checkHeight(1)
+    for (const factor of [.5, 2, 1]) {
+      sandbox.updatePlacemarks(markers, {labelSize: 24, labelHeight: factor}); sandbox.renderFrame()
+      checkHeight(factor)
+      expect(parts.sphere.scale.equals(original.scale)).toBe(true)
+      expect(camera.projectionMatrix.equals(original.projection)).toBe(true)
+      expect(holder.querySelector('[data-sandbox-placemark="height"]')).toBe(button)
+    }
+    sandbox.updatePlacemarks(markers, {labelSize: 24, labelHeight: 2}); sandbox.renderFrame()
+    const distanceBuffer = parts.connector.geometry.getAttribute('instanceDistanceEnd')
+    Object.defineProperties(holder, {clientWidth: {value: 600}, clientHeight: {value: 400}})
+    resizeCallback!([], {} as ResizeObserver); sandbox.renderFrame()
+    checkHeight(2, 600, 400)
+    expect(parts.connector.geometry.getAttribute('instanceDistanceEnd')).toBe(distanceBuffer)
+    sandbox.dispose()
+    for (const listener of disposals) expect(listener).toHaveBeenCalledTimes(1)
+    holder.remove()
+  })
+
+  it.each([
+    {height: undefined, expected: 1}, {height: null, expected: 1}, {height: '2', expected: 1},
+    {height: NaN, expected: 1}, {height: Infinity, expected: 1}, {height: -Infinity, expected: 1},
+    {height: -.5, expected: .2}, {height: 10, expected: 3}, {height: .2, expected: .2}, {height: 3, expected: 3},
+    {height: 1.24, expected: 1.2}, {height: 1.26, expected: 1.3},
+  ])('normalizes floating height $height to $expected and updates the existing dash endpoint', ({height, expected}) => {
+    const holder = container(), sandbox = new SandboxRenderer(holder)
+    sandbox.build(terrain, [], null); sandbox.setInteractionEnabled(false)
+    const {scene, camera} = drawFrame()
+    const markers = [{id: 'height-limit', coordinates: gridCoordinate(.5, .5, terrain), label: '1'}]
+    sandbox.updatePlacemarks(markers)
+    const parts = placemarkVisuals(scene, 'height-limit'), texture = parts.label.material.map
+    const anchor = parts.sphere.position.clone(), automaticHeight = parts.label.position.y - anchor.y
+    const geometry = parts.connector.geometry, originalPosition = camera.position.clone()
+    expect(sanitizeSandboxLabelHeight(height)).toBe(expected)
+    sandbox.updatePlacemarks(markers, {labelHeight: height as number | undefined})
+    const [start, end] = connectorEnds(parts.connector)
+    expect(parts.label.position.y - anchor.y).toBeCloseTo(automaticHeight * expected, 6)
+    expect(start.distanceTo(anchor)).toBeLessThan(.001)
+    expect(end.distanceTo(parts.label.position)).toBeLessThan(.001)
+    expect(geometry.getAttribute('instanceDistanceEnd').getX(0)).toBeCloseTo(automaticHeight * expected, 3)
+    expect(parts.sphere.position.equals(anchor)).toBe(true); expect(parts.connector.geometry).toBe(geometry)
+    expect(parts.label.material.map).toBe(texture); expect(camera.position.equals(originalPosition)).toBe(true)
+    expect(projectedDiameter(parts.sphere, camera, 900)).toBeCloseTo(7, 6)
+    const distanceBuffer = geometry.getAttribute('instanceDistanceEnd')
+    sandbox.updatePlacemarks(markers, {labelHeight: expected, selectedId: 'height-limit'})
+    expect(geometry.getAttribute('instanceDistanceEnd')).toBe(distanceBuffer)
+    expect(parts.label.material.map).toBe(texture)
+    sandbox.dispose(); holder.remove()
+  })
+
+  it('keeps a large-font long name on at most two texture lines while preserving the full accessible name', () => {
+    const holder = container(), sandbox = new SandboxRenderer(holder)
+    sandbox.build(terrain, [], null)
+    const {scene, camera} = drawFrame(), title = '这是很长的沿途名称需要分行显示并限制两行'.repeat(4)
+    sandbox.updatePlacemarks([{id: 'long', coordinates: gridCoordinate(.5, .5, terrain), label: '5', title}], {labelSize: 32})
+    const parts = placemarkVisuals(scene, 'long'), texture = parts.label.material.map!, canvas = texture.image as HTMLCanvasElement
+    const paint = labelPaints.get(canvas)!
+    expect(paint.texts).toHaveLength(2); expect(paint.texts[1].endsWith('…')).toBe(true)
+    expect(paint.texts.every(line => Array.from(line).length * 32 <= 248)).toBe(true)
+    expect(labelFonts.get(canvas)?.every(font => /^600 32px /.test(font))).toBe(true)
+    const button = holder.querySelector<HTMLButtonElement>('[data-sandbox-placemark="long"]')!
+    expect(button.textContent).toBe(title); expect(button.title).toBe(title)
+    expect(button.getAttribute('aria-label')).toBe('标注点 5：' + title)
+    expect(projectedLabelHeight(parts.label, camera, 600)).toBeCloseTo(canvas.height / 2, 6)
+    Object.defineProperties(holder, {clientWidth: {value: 600}, clientHeight: {value: 400}})
+    resizeCallback!([], {} as ResizeObserver); sandbox.renderFrame()
+    expect(parts.label.material.map).toBe(texture)
+    expect(projectedLabelHeight(parts.label, camera, 400)).toBeCloseTo(canvas.height / 2, 6)
+    sandbox.dispose(); holder.remove()
+  })
+
+  it('updates screen sizes and world labels before rendering each captured frame after a camera change', () => {
+    const holder = container(), sandbox = new SandboxRenderer(holder)
+    sandbox.build(terrain, [], null)
+    const {scene, camera} = drawFrame()
+    sandbox.updatePlacemarks([{id: 'center', coordinates: gridCoordinate(.5, .5, terrain), label: '17'}])
+    const parts = placemarkVisuals(scene, 'center'), texture = parts.label.material.map
+    const button = holder.querySelector<HTMLButtonElement>('[data-sandbox-placemark="center"]')!
+    expect(button.textContent).toBe('17')
+    const originalLabelHeight = projectedLabelHeight(parts.label, camera, 600)
+    const originalScale = parts.sphere.scale.x
+    camera.position.multiplyScalar(.7)
+    camera.lookAt(parts.label.position)
+    const renders = webgl.render.mock.calls.length
+    webgl.render.mockImplementationOnce((renderedScene: THREE.Scene, renderedCamera: THREE.PerspectiveCamera) => {
+      expect(renderedScene).toBe(scene); expect(renderedCamera).toBe(camera)
+      expect(parts.sphere.scale.x).not.toBeCloseTo(originalScale, 5)
+      expect(projectedDiameter(parts.sphere, camera, 900)).toBeCloseTo(7, 6)
+      expect(projectedLabelHeight(parts.label, camera, 600)).toBeCloseTo(originalLabelHeight, 6)
+      const head = parts.label.getWorldPosition(new THREE.Vector3()).project(camera)
+      expect(parseFloat(button.style.left)).toBeCloseTo((head.x + 1) * 450, 6)
+      expect(parseFloat(button.style.top)).toBeCloseTo((1 - head.y) * 300, 6)
+      expect(scene.getObjectByName('sandbox-placemarks')).toBe(parts.group)
+      expect(parts.label.material.map).toBe(texture)
+    })
+    sandbox.renderFrame()
+    expect(webgl.render).toHaveBeenCalledTimes(renders + 1)
+    sandbox.dispose(); holder.remove()
+  })
+
+  it('disposes removed label assets once while retaining shared balls and connectors for the remaining node', () => {
+    const holder = container(), sandbox = new SandboxRenderer(holder)
+    sandbox.build(terrain, [], null)
+    const {scene} = drawFrame()
+    const markers = [{id: 'first', coordinates: gridCoordinate(.4, .5, terrain), label: '1', title: '第一处'},
+      {id: 'second', coordinates: gridCoordinate(.6, .5, terrain), label: '2', title: '第二处'}]
+    sandbox.updatePlacemarks(markers)
+    const first = placemarkVisuals(scene, 'first'), second = placemarkVisuals(scene, 'second')
+    expect(first.sphere.geometry).toBe(second.sphere.geometry)
+    expect(first.sphere.material).toBe(second.sphere.material)
+    expect(first.connector.material).toBe(second.connector.material)
+    const shared = [first.sphere.geometry, first.sphere.material, first.connector.material].map(resource => {
+      const listener = vi.fn(); resource.addEventListener('dispose', listener); return listener
+    })
+    const removed = [first.connector.geometry, first.label.material, first.label.material.map!].map(resource => {
+      const listener = vi.fn(); resource.addEventListener('dispose', listener); return listener
+    })
+    const remaining = [second.connector.geometry, second.label.material, second.label.material.map!].map(resource => {
+      const listener = vi.fn(); resource.addEventListener('dispose', listener); return listener
+    })
+    sandbox.updatePlacemarks([markers[1]])
+    expect(first.node.parent).toBeNull(); expect(placemarkVisuals(scene, 'second').node).toBe(second.node)
+    for (const listener of removed) expect(listener).toHaveBeenCalledTimes(1)
+    for (const listener of [...shared, ...remaining]) expect(listener).not.toHaveBeenCalled()
+    sandbox.dispose(); sandbox.dispose()
+    for (const listener of [...removed, ...shared, ...remaining]) expect(listener).toHaveBeenCalledTimes(1)
+    expect(first.group.parent).toBeNull(); holder.remove()
   })
 
   it('clears stale selection callbacks and overlays on replacement, rebuild, context loss and disposal', () => {
@@ -639,13 +1090,18 @@ describe('sandbox placemark projection and interaction', () => {
     expect(removed.onclick).toBeNull()
     sandbox.updatePlacemarks(markers, {onSelect: selected})
     const rebuilt = holder.querySelector<HTMLButtonElement>('[data-sandbox-placemark="old"]')!
+    const rebuiltResources = watchDisposal(drawFrame().scene)
     sandbox.build(terrain, [], null)
+    for (const listener of rebuiltResources) expect(listener).toHaveBeenCalledTimes(1)
     expect(holder.querySelector('.trk-sandbox-placemarks')).toBeNull()
     rebuilt.click()
     expect(selected).not.toHaveBeenCalled()
     sandbox.updatePlacemarks(markers, {onSelect: selected})
     const lost = holder.querySelector<HTMLButtonElement>('[data-sandbox-placemark="old"]')!
+    const lostResources = watchDisposal(drawFrame().scene)
     holder.querySelector('canvas')!.dispatchEvent(new Event('webglcontextlost', {cancelable: true}))
+    for (const listener of lostResources) expect(listener).toHaveBeenCalledTimes(1)
+    for (const listener of rebuiltResources) expect(listener).toHaveBeenCalledTimes(1)
     expect(holder.querySelector('.trk-sandbox-placemarks')).toBeNull()
     expect(holder.children).toHaveLength(0)
     lost.click()
@@ -653,6 +1109,381 @@ describe('sandbox placemark projection and interaction', () => {
     sandbox.updatePlacemarks(markers, {onSelect: selected})
     expect(holder.children).toHaveLength(0)
     sandbox.dispose()
+    holder.remove()
+  })
+})
+
+
+
+describe('sandbox terrain occlusion during rotation', () => {
+  const ridge: TerrainGrid = {...terrain, columns: 3, rows: 3, elevations: [0, 0, 0, 600, 600, 600, 0, 0, 0]}
+  const north: import('../src/track/sandbox/types.ts').SandboxCameraState = {position: [0, 450, -2000], target: [0, 450, 300], fov: 38}
+  const south: import('../src/track/sandbox/types.ts').SandboxCameraState = {position: [0, 450, 2000], target: [0, 450, 300], fov: 38}
+
+  it('submits blocked source balls and leaders for GPU depth while keeping exposed labels clickable and obscured labels noninteractive', () => {
+    const holder = container(), sandbox = new SandboxRenderer(holder), selected = vi.fn()
+    vi.spyOn(holder, 'getBoundingClientRect').mockImplementation(() => ({x: 0, y: 0, left: 0, top: 0,
+      width: holder.clientWidth, height: holder.clientHeight, right: holder.clientWidth, bottom: holder.clientHeight,
+      toJSON: () => ({}),
+    } as DOMRect))
+    sandbox.build(ridge, [], null)
+    sandbox.setInteractionEnabled(false)
+    const {scene, camera} = drawFrame(), surface = terrainSurface(scene), resources = watchDisposal(scene)
+    const markers = [{id: 'valley', coordinates: gridCoordinate(1, 1.6, ridge), label: '1', title: '山后点位'},
+      {id: 'slope', coordinates: gridCoordinate(1, 1.1, ridge), label: '2', title: '坡后点位'}]
+    sandbox.updatePlacemarks(markers, {labelSize: 24, onSelect: selected})
+    const originals = markers.map(marker => {
+      const parts = placemarkVisuals(scene, marker.id)
+      return {...parts, button: holder.querySelector<HTMLButtonElement>('[data-sandbox-placemark="' + marker.id + '"]')!,
+        anchor: parts.sphere.position.clone(), head: parts.label.position.clone(), sphereGeometry: parts.sphere.geometry,
+        lineGeometry: parts.connector.geometry, linePositions: parts.connector.geometry.getAttribute('instanceStart'),
+        lineDistances: parts.connector.geometry.getAttribute('instanceDistanceEnd'), texture: parts.label.material.map!}
+    })
+    const textureDisposals = originals.map(parts => {
+      const listener = vi.fn(); parts.texture.addEventListener('dispose', listener); return listener
+    })
+    sandbox.applyCameraState(north)
+    for (const parts of originals) {
+      expect(meshBlocksPoint(surface, camera.position, parts.anchor)).toBe(true)
+      for (const material of [parts.sphere.material, parts.connector.material, parts.label.material]) {
+        expect(material.depthTest).toBe(true); expect(material.depthWrite).toBe(false)
+      }
+    }
+    // The slope's billboard clears the ridge even though its ball and lower leader are behind it.
+    expect(originals[1].head.y).toBeGreaterThan(terrainModel(ridge).topHeight)
+    expect(meshBlocksPoint(surface, camera.position, originals[1].head)).toBe(false)
+    const labelCenters = originals.map(parts => parts.label.getWorldPosition(new THREE.Vector3()).addScaledVector(
+      new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 1), parts.label.getWorldScale(new THREE.Vector3()).y / 2))
+    expect(meshBlocksPoint(surface, camera.position, labelCenters[0])).toBe(true)
+    expect(meshBlocksPoint(surface, camera.position, labelCenters[1])).toBe(false)
+    webgl.render.mockImplementationOnce(() => {
+      for (const parts of originals) {
+        expect(parts.node.visible).toBe(true); expect(parts.sphere.visible).toBe(true)
+        expect(parts.connector.visible).toBe(true); expect(parts.label.visible).toBe(true)
+        expect(projectedDiameter(parts.sphere, camera, 900)).toBeCloseTo(7, 6)
+      }
+      expect(originals[0].button.hidden).toBe(true); expect(originals[1].button.hidden).toBe(false)
+    })
+    sandbox.renderFrame()
+    expect(originals[0].button.style.display).toBe('none')
+    expect(originals[1].button.style.display).toBe('')
+    originals[0].button.click()
+    expect(selected).not.toHaveBeenCalled()
+    for (const [index, parts] of originals.entries()) {
+      const projection = labelCenters[index].clone().project(camera)
+      parts.button.dispatchEvent(new MouseEvent('click', {bubbles: true, detail: 1,
+        clientX: (projection.x + 1) * 450, clientY: (1 - projection.y) * 300}))
+    }
+    expect(selected.mock.calls).toEqual([['slope']])
+    sandbox.applyCameraState(south)
+    sandbox.renderFrame()
+    for (const [index, marker] of markers.entries()) {
+      const parts = originals[index], current = placemarkVisuals(scene, marker.id)
+      expect(meshBlocksPoint(surface, camera.position, parts.anchor)).toBe(false)
+      expect(current.node).toBe(parts.node); expect(current.sphere).toBe(parts.sphere)
+      expect(parts.node.visible).toBe(true); expect(parts.button.hidden).toBe(false)
+      expect(parts.button.style.display).toBe('')
+      expect(parts.sphere.position.equals(parts.anchor)).toBe(true); expect(parts.label.position.equals(parts.head)).toBe(true)
+      expect(parts.sphere.geometry).toBe(parts.sphereGeometry); expect(parts.connector.geometry).toBe(parts.lineGeometry)
+      expect(parts.connector.geometry.getAttribute('instanceStart')).toBe(parts.linePositions)
+      expect(parts.connector.geometry.getAttribute('instanceDistanceEnd')).toBe(parts.lineDistances)
+      expect(parts.label.material.map).toBe(parts.texture)
+      expect(labelFonts.get(parts.texture.image as HTMLCanvasElement)?.[0]).toMatch(/^600 24px /)
+      expect(projectedDiameter(parts.sphere, camera, 900)).toBeCloseTo(7, 6)
+      expect(projectedLabelHeight(parts.label, camera, 600)).toBeCloseTo((parts.texture.image as HTMLCanvasElement).height / 2, 6)
+      parts.button.click()
+    }
+    expect(selected.mock.calls).toEqual([['slope'], ['valley'], ['slope']])
+    Object.defineProperties(holder, {clientWidth: {value: 600}, clientHeight: {value: 400}})
+    resizeCallback!([], {} as ResizeObserver); sandbox.renderFrame()
+    for (const parts of originals) {
+      expect(parts.node.visible).toBe(true); expect(parts.button.hidden).toBe(false)
+      expect(projectedDiameter(parts.sphere, camera, 600)).toBeCloseTo(7, 6)
+      expect(projectedLabelHeight(parts.label, camera, 400)).toBeCloseTo((parts.texture.image as HTMLCanvasElement).height / 2, 6)
+      expect(parts.label.material.map).toBe(parts.texture)
+    }
+    for (const listener of [...resources, ...textureDisposals]) expect(listener).not.toHaveBeenCalled()
+    sandbox.dispose()
+    for (const listener of [...resources, ...textureDisposals]) expect(listener).toHaveBeenCalledTimes(1)
+    holder.remove()
+  })
+
+  it('reveals a lifted label above a real ridge without moving or exposing its blocked ground anchor', () => {
+    const holder = container(), sandbox = new SandboxRenderer(holder), selected = vi.fn()
+    sandbox.build(ridge, [], null); sandbox.setInteractionEnabled(false)
+    const {scene, camera} = drawFrame(), surface = terrainSurface(scene)
+    const markers = [{id: 'height-over-ridge', coordinates: gridCoordinate(1, 1.22, ridge), label: '1', title: 'Ridge'}]
+    sandbox.updatePlacemarks(markers, {labelSize: 24, labelHeight: .2, onSelect: selected})
+    sandbox.applyCameraState(north); sandbox.renderFrame()
+    const parts = placemarkVisuals(scene, 'height-over-ridge')
+    const button = holder.querySelector<HTMLButtonElement>('[data-sandbox-placemark="height-over-ridge"]')!
+    const anchor = parts.sphere.position.clone(), lowHead = parts.label.position.clone()
+    const texture = parts.label.material.map!, geometry = parts.connector.geometry, position = camera.position.clone()
+    expect(meshBlocksPoint(surface, camera.position, anchor)).toBe(true)
+    expect(meshBlocksPoint(surface, camera.position, lowHead)).toBe(true)
+    expect(button.hidden).toBe(true); button.click(); expect(selected).not.toHaveBeenCalled()
+    sandbox.updatePlacemarks(markers, {labelSize: 24, labelHeight: 2, onSelect: selected}); sandbox.renderFrame()
+    expect(meshBlocksPoint(surface, camera.position, parts.label.position)).toBe(false)
+    expect(meshBlocksPoint(surface, camera.position, parts.sphere.position)).toBe(true)
+    expect(button.hidden).toBe(false); button.click(); expect(selected.mock.calls).toEqual([['height-over-ridge']])
+    expect(parts.label.position.y).toBeGreaterThan(lowHead.y)
+    expect(geometry.getAttribute('instanceDistanceEnd').getX(0)).toBeCloseTo(parts.label.position.y - anchor.y, 3)
+    const [, end] = connectorEnds(parts.connector)
+    expect(end.distanceTo(parts.label.position)).toBeLessThan(.001)
+    expect(parts.sphere.position.equals(anchor)).toBe(true); expect(camera.position.equals(position)).toBe(true)
+    expect(parts.label.material.map).toBe(texture); expect(parts.connector.geometry).toBe(geometry)
+    for (const material of [parts.sphere.material, parts.connector.material, parts.label.material]) {
+      expect(material.depthTest).toBe(true); expect(material.depthWrite).toBe(false)
+    }
+    for (const part of [parts.node, parts.sphere, parts.connector, parts.label]) expect(part.visible).toBe(true)
+    sandbox.updatePlacemarks(markers, {labelSize: 24, labelHeight: .2, onSelect: selected}); sandbox.renderFrame()
+    expect(parts.label.position.equals(lowHead)).toBe(true); expect(button.hidden).toBe(true)
+    expect(parts.label.material.map).toBe(texture); expect(parts.sphere.position.equals(anchor)).toBe(true)
+    sandbox.dispose(); holder.remove()
+  })
+
+  it('accepts a pointer on an exposed label edge while rejecting a pointer on its terrain-blocked edge', () => {
+    const holder = container(), sandbox = new SandboxRenderer(holder), selected = vi.fn()
+    sandbox.build(ridge, [], null); sandbox.setInteractionEnabled(false)
+    const {scene, camera} = drawFrame(), surface = terrainSurface(scene)
+    sandbox.updatePlacemarks([{id: 'partial', coordinates: gridCoordinate(1, 1.22, ridge), label: '1', title: '半遮挡文字'}],
+      {labelSize: 32, onSelect: selected})
+    sandbox.applyCameraState(north); sandbox.renderFrame()
+    const parts = placemarkVisuals(scene, 'partial'), button = holder.querySelector<HTMLButtonElement>('[data-sandbox-placemark="partial"]')!
+    const bottom = parts.label.getWorldPosition(new THREE.Vector3())
+    const up = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 1)
+    const height = parts.label.getWorldScale(new THREE.Vector3()).y
+    const lower = bottom.clone().addScaledVector(up, height * .2)
+    const center = bottom.clone().addScaledVector(up, height * .5)
+    const upper = bottom.clone().addScaledVector(up, height * .8)
+    expect(meshBlocksPoint(surface, camera.position, parts.sphere.position)).toBe(true)
+    expect(meshBlocksPoint(surface, camera.position, lower)).toBe(true)
+    expect(meshBlocksPoint(surface, camera.position, center)).toBe(true)
+    expect(meshBlocksPoint(surface, camera.position, upper)).toBe(false)
+    expect(parts.node.visible).toBe(true); expect(button.hidden).toBe(false)
+    expect(parts.sphere.material.depthTest).toBe(true); expect(parts.connector.material.depthTest).toBe(true)
+    expect(parts.label.material.depthTest).toBe(true)
+    expect(labelFonts.get(parts.label.material.map!.image as HTMLCanvasElement)?.[0]).toMatch(/^600 32px /)
+    const texture = parts.label.material.map
+    const clickWorldPoint = (point: THREE.Vector3) => {
+      const projection = point.clone().project(camera)
+      button.dispatchEvent(new MouseEvent('click', {bubbles: true, detail: 1,
+        clientX: (projection.x + 1) * 450, clientY: (1 - projection.y) * 300}))
+    }
+    clickWorldPoint(lower)
+    expect(selected).not.toHaveBeenCalled()
+    clickWorldPoint(upper)
+    expect(selected.mock.calls).toEqual([['partial']])
+    expect(parts.label.material.map).toBe(texture)
+    expect(projectedDiameter(parts.sphere, camera, 900)).toBeCloseTo(7, 6)
+    sandbox.dispose(); holder.remove()
+  })
+
+  it('submits route endpoints for GPU depth and deduplicates source balls independently of label hit-target visibility', () => {
+    const holder = container(), sandbox = new SandboxRenderer(holder)
+    const startCoordinate = gridCoordinate(1, 1.6, ridge), endCoordinate = gridCoordinate(.6, .4, ridge)
+    const points: import('../src/protocol.ts').TrackPoint[] = [[...startCoordinate, null, null], [...endCoordinate, null, null]]
+    sandbox.build(ridge, points, null); sandbox.setInteractionEnabled(false)
+    const {scene, camera} = drawFrame(), surface = terrainSurface(scene)
+    const start = scene.getObjectByName('sandbox-route-start') as THREE.Mesh<THREE.SphereGeometry, THREE.MeshBasicMaterial>
+    const end = scene.getObjectByName('sandbox-route-end') as THREE.Mesh<THREE.SphereGeometry, THREE.MeshBasicMaterial>
+    const positions = [start.position.clone(), end.position.clone()], geometries = [start.geometry, end.geometry]
+    for (const endpoint of [start, end]) {expect(endpoint.material.depthTest).toBe(true); expect(endpoint.material.depthWrite).toBe(false)}
+    sandbox.applyCameraState(north); sandbox.renderFrame()
+    expect(meshBlocksPoint(surface, camera.position, start.position)).toBe(true)
+    expect(meshBlocksPoint(surface, camera.position, end.position)).toBe(false)
+    expect(start.visible).toBe(true); expect(end.visible).toBe(true)
+    expect(projectedDiameter(start, camera, 900)).toBeCloseTo(10, 6)
+    expect(projectedDiameter(end, camera, 900)).toBeCloseTo(10, 6)
+    sandbox.applyCameraState(south); sandbox.renderFrame()
+    expect(meshBlocksPoint(surface, camera.position, start.position)).toBe(false)
+    expect(meshBlocksPoint(surface, camera.position, end.position)).toBe(true)
+    expect(start.visible).toBe(true); expect(end.visible).toBe(true)
+    expect(projectedDiameter(end, camera, 900)).toBeCloseTo(10, 6)
+    expect(projectedDiameter(start, camera, 900)).toBeCloseTo(10, 6)
+    const markers = [{id: 'start-source', coordinates: startCoordinate, label: '1', title: '起点名称'}]
+    sandbox.updatePlacemarks(markers, {labelSize: 24})
+    const source = placemarkVisuals(scene, 'start-source'), texture = source.label.material.map
+    expect(source.node.visible).toBe(true); expect(start.visible).toBe(false)
+    expect(projectedDiameter(source.sphere, camera, 900)).toBeCloseTo(10, 6)
+    sandbox.applyCameraState(north); sandbox.renderFrame()
+    const button = holder.querySelector<HTMLButtonElement>('[data-sandbox-placemark="start-source"]')!
+    expect(meshBlocksPoint(surface, camera.position, source.sphere.position)).toBe(true)
+    expect(source.node.visible).toBe(true); expect(source.sphere.visible).toBe(true); expect(button.hidden).toBe(true)
+    expect(start.visible).toBe(false); expect(end.visible).toBe(true)
+    sandbox.updatePlacemarks(markers, {labelSize: 24, visible: false})
+    expect(source.node.visible).toBe(false); expect(start.visible).toBe(true); expect(end.visible).toBe(true)
+    sandbox.applyCameraState(south); sandbox.renderFrame()
+    expect(start.visible).toBe(true); expect(end.visible).toBe(true)
+    expect(projectedDiameter(start, camera, 900)).toBeCloseTo(10, 6)
+    sandbox.updatePlacemarks(markers, {labelSize: 24, visible: true})
+    expect(source.node.visible).toBe(true); expect(button.hidden).toBe(false)
+    expect(start.visible).toBe(false); expect(end.visible).toBe(true)
+    expect(source.label.material.map).toBe(texture)
+    Object.defineProperties(holder, {clientWidth: {value: 600}, clientHeight: {value: 400}})
+    resizeCallback!([], {} as ResizeObserver); sandbox.renderFrame()
+    expect(projectedDiameter(source.sphere, camera, 600)).toBeCloseTo(10, 6)
+    for (const [index, endpoint] of [start, end].entries()) {
+      expect(endpoint.position.equals(positions[index])).toBe(true); expect(endpoint.geometry).toBe(geometries[index])
+    }
+    sandbox.dispose(); holder.remove()
+  })
+
+  it('keeps a route-lifted summit anchor visible without treating its own terrain triangle as an occluder', () => {
+    const holder = container(), sandbox = new SandboxRenderer(holder), coordinate = gridCoordinate(1, 1, ridge)
+    const points: import('../src/protocol.ts').TrackPoint[] = [[...coordinate, null, null], [...gridCoordinate(1, 1.6, ridge), null, null]]
+    sandbox.build(ridge, points, null); sandbox.setInteractionEnabled(false)
+    const {scene, camera} = drawFrame(), surface = terrainSurface(scene)
+    sandbox.applyCameraState({position: [0, 1000, 2000], target: [0, terrainModel(ridge).topHeight + 1, 0], fov: 38})
+    sandbox.renderFrame()
+    const start = scene.getObjectByName('sandbox-route-start') as THREE.Mesh<THREE.SphereGeometry, THREE.MeshBasicMaterial>
+    expect(meshBlocksPoint(surface, camera.position, start.position)).toBe(false)
+    expect(start.position.y).toBeCloseTo(terrainModel(ridge).topHeight + 1, 6)
+    expect(start.visible).toBe(true); expect(projectedDiameter(start, camera, 900)).toBeCloseTo(10, 6)
+    sandbox.updatePlacemarks([{id: 'summit', coordinates: coordinate, label: '1', title: '山脊点'}], {labelSize: 24})
+    const source = placemarkVisuals(scene, 'summit'), button = holder.querySelector<HTMLButtonElement>('[data-sandbox-placemark="summit"]')!
+    expect(meshBlocksPoint(surface, camera.position, source.sphere.position)).toBe(false)
+    expect(source.node.visible).toBe(true); expect(button.hidden).toBe(false)
+    expect(start.visible).toBe(false); expect(projectedDiameter(source.sphere, camera, 900)).toBeCloseTo(10, 6)
+    sandbox.dispose(); holder.remove()
+  })
+})
+
+describe('sandbox route endpoint balls', () => {
+  function endpoints(scene: THREE.Scene) {
+    const start = scene.getObjectByName('sandbox-route-start') as THREE.Mesh<THREE.SphereGeometry, THREE.MeshBasicMaterial>
+    const end = scene.getObjectByName('sandbox-route-end') as THREE.Mesh<THREE.SphereGeometry, THREE.MeshBasicMaterial>
+    for (const endpoint of [start, end]) {
+      expect(endpoint).toBeInstanceOf(THREE.Mesh)
+      expect(endpoint.geometry).toBeInstanceOf(THREE.SphereGeometry)
+      expect(endpoint.geometry.parameters.radius).toBe(1)
+      expect(endpoint.material).toBeInstanceOf(THREE.MeshBasicMaterial)
+      expect(endpoint.material.depthTest).toBe(true)
+      expect(endpoint.material.depthWrite).toBe(false)
+    }
+    return {start, end}
+  }
+
+  const source: import('../src/protocol.ts').TrackPoint[] = [
+    [120.005, 30.015, null, null], [120.007, 30.013, null, null],
+    [120.013, 30.007, null, null], [120.015, 30.005, null, null],
+  ]
+
+  it('centers endpoints on actual segmented route ends and keeps endpoint balls at 10px and ordinary source balls at 7px near, far and after resize', () => {
+    const holder = container(), sandbox = new SandboxRenderer(holder)
+    sandbox.build(terrain, source, null, {segmentStarts: [2]})
+    const {scene, camera} = drawFrame(), {start, end} = endpoints(scene)
+    const paths = scene.children.filter(object => object instanceof Line2) as Line2[]
+    expect(paths).toHaveLength(2)
+    const first = paths[0].geometry.getAttribute('instanceStart')
+    const last = paths[1].geometry.getAttribute('instanceEnd'), lastIndex = last.count - 1
+    expect(start.position.distanceTo(new THREE.Vector3(first.getX(0), first.getY(0), first.getZ(0)))).toBeLessThan(.001)
+    expect(end.position.distanceTo(new THREE.Vector3(last.getX(lastIndex), last.getY(lastIndex), last.getZ(lastIndex)))).toBeLessThan(.001)
+    for (const endpoint of [start, end]) {
+      const {x, z} = terrainPosition(endpoint === start ? source[0][0] : source[3][0], endpoint === start ? source[0][1] : source[3][1], terrain)
+      expect(endpoint.position.y).toBeCloseTo(sceneHeight(triangleElevation(x, z, terrain), terrainModel(terrain)) + 1, 6)
+      expect(projectedDiameter(endpoint, camera, 900)).toBeCloseTo(10, 6)
+    }
+    sandbox.updatePlacemarks([{id: 'middle', coordinates: gridCoordinate(.5, .5, terrain), label: '9', title: '沿途点'}])
+    const middle = placemarkVisuals(scene, 'middle').sphere
+    const geometries = [start.geometry, end.geometry, middle.geometry]
+    const materials = [start.material, end.material, middle.material]
+    const model = terrainModel(terrain), target = new THREE.Vector3(0, model.topHeight / 2, 0)
+    let previousScale = start.scale.x
+    for (const distance of [1000, 5000]) {
+      camera.position.copy(target).add(new THREE.Vector3(0, distance * .65, distance))
+      camera.lookAt(target)
+      const renders = webgl.render.mock.calls.length
+      webgl.render.mockImplementationOnce((renderedScene: THREE.Scene, renderedCamera: THREE.PerspectiveCamera) => {
+        expect(renderedScene).toBe(scene); expect(renderedCamera).toBe(camera)
+        for (const ball of [start, end, middle]) {
+          expect(ball.visible).toBe(true)
+          expect(projectedDiameter(ball, camera, 900)).toBeCloseTo(ball === middle ? 7 : 10, 6)
+        }
+      })
+      sandbox.renderFrame()
+      expect(webgl.render).toHaveBeenCalledTimes(renders + 1)
+      expect(start.scale.x).not.toBeCloseTo(previousScale, 5)
+      previousScale = start.scale.x
+    }
+    Object.defineProperties(holder, {clientWidth: {value: 600}, clientHeight: {value: 400}})
+    resizeCallback!([], {} as ResizeObserver)
+    sandbox.renderFrame()
+    for (const [index, ball] of [start, end, middle].entries()) {
+      expect(projectedDiameter(ball, camera, 600)).toBeCloseTo(ball === middle ? 7 : 10, 6)
+      expect(ball.geometry).toBe(geometries[index]); expect(ball.material).toBe(materials[index])
+    }
+    expect(scene.getObjectByName('sandbox-route-start')).toBe(start)
+    expect(scene.getObjectByName('sandbox-route-end')).toBe(end)
+    sandbox.dispose(); holder.remove()
+  })
+
+  it('shows a source ball once when it overlaps an endpoint and restores endpoint balls when source markers are hidden or removed', () => {
+    const holder = container(), sandbox = new SandboxRenderer(holder)
+    sandbox.build(terrain, source, null)
+    const {scene, camera} = drawFrame(), {start, end} = endpoints(scene)
+    expect(start.visible).toBe(true); expect(end.visible).toBe(true)
+    const markers = [
+      {id: 'source-start', coordinates: [source[0][0], source[0][1]] as [number, number], label: '1', title: '出发点'},
+      {id: 'source-end', coordinates: [source[3][0], source[3][1]] as [number, number], label: '2', title: '到达点'},
+    ]
+    sandbox.updatePlacemarks(markers)
+    const sourceStart = placemarkVisuals(scene, 'source-start'), sourceEnd = placemarkVisuals(scene, 'source-end')
+    expect(sourceStart.node.visible).toBe(true); expect(sourceEnd.node.visible).toBe(true)
+    expect(sourceStart.sphere.position.distanceTo(start.position)).toBeLessThan(.001)
+    expect(sourceEnd.sphere.position.distanceTo(end.position)).toBeLessThan(.001)
+    expect(start.visible).toBe(false); expect(end.visible).toBe(false)
+    expect(projectedDiameter(sourceStart.sphere, camera, 900)).toBeCloseTo(10, 6)
+    expect(projectedDiameter(sourceEnd.sphere, camera, 900)).toBeCloseTo(10, 6)
+    sandbox.updatePlacemarks(markers, {labelSize: 32})
+    const model = terrainModel(terrain), target = new THREE.Vector3(0, model.topHeight / 2, 0)
+    for (const distance of [1000, 5000]) {
+      camera.position.copy(target).add(new THREE.Vector3(0, distance * .65, distance)); camera.lookAt(target)
+      sandbox.renderFrame()
+      expect(projectedDiameter(sourceStart.sphere, camera, 900)).toBeCloseTo(10, 6)
+      expect(projectedDiameter(sourceEnd.sphere, camera, 900)).toBeCloseTo(10, 6)
+      expect(start.visible).toBe(false); expect(end.visible).toBe(false)
+    }
+    sandbox.updatePlacemarks([{...markers[0], coordinates: gridCoordinate(.45, .45, terrain)}, markers[1]], {labelSize: 32})
+    expect(placemarkVisuals(scene, 'source-start').sphere).toBe(sourceStart.sphere)
+    expect(projectedDiameter(sourceStart.sphere, camera, 900)).toBeCloseTo(7, 6)
+    expect(projectedDiameter(sourceEnd.sphere, camera, 900)).toBeCloseTo(10, 6)
+    expect(start.visible).toBe(true); expect(end.visible).toBe(false)
+    sandbox.updatePlacemarks(markers, {visible: false})
+    expect(sourceStart.node.visible).toBe(false); expect(sourceEnd.node.visible).toBe(false)
+    expect(start.visible).toBe(true); expect(end.visible).toBe(true)
+    sandbox.updatePlacemarks([markers[0]], {visible: true})
+    expect(start.visible).toBe(false); expect(end.visible).toBe(true)
+    sandbox.updatePlacemarks([])
+    expect(start.visible).toBe(true); expect(end.visible).toBe(true)
+    expect(scene.getObjectByName('sandbox-route-start')).toBe(start)
+    expect(scene.getObjectByName('sandbox-route-end')).toBe(end)
+    sandbox.dispose(); holder.remove()
+  })
+
+  it('releases shared endpoint geometry and endpoint materials once on rebuild and clears old endpoint state before an empty route', () => {
+    const holder = container(), sandbox = new SandboxRenderer(holder)
+    sandbox.build(terrain, source, null)
+    const first = drawFrame().scene, firstEndpoints = endpoints(first)
+    expect(firstEndpoints.start.geometry).toBe(firstEndpoints.end.geometry)
+    const firstResources = watchDisposal(first)
+    sandbox.build(terrain, [source[1], source[2]], null)
+    for (const listener of firstResources) expect(listener).toHaveBeenCalledTimes(1)
+    expect(firstEndpoints.start.parent).toBeNull(); expect(firstEndpoints.end.parent).toBeNull()
+    const second = drawFrame().scene, secondEndpoints = endpoints(second)
+    expect(secondEndpoints.start).not.toBe(firstEndpoints.start)
+    expect(secondEndpoints.end).not.toBe(firstEndpoints.end)
+    expect(secondEndpoints.start.geometry).not.toBe(firstEndpoints.start.geometry)
+    const secondResources = watchDisposal(second)
+    sandbox.build(terrain, [], null)
+    for (const listener of secondResources) expect(listener).toHaveBeenCalledTimes(1)
+    const empty = drawFrame().scene
+    expect(empty.getObjectByName('sandbox-route-start')).toBeUndefined()
+    expect(empty.getObjectByName('sandbox-route-end')).toBeUndefined()
+    expect(secondEndpoints.start.parent).toBeNull(); expect(secondEndpoints.end.parent).toBeNull()
+    sandbox.renderFrame()
+    sandbox.dispose(); sandbox.dispose()
+    for (const listener of [...firstResources, ...secondResources]) expect(listener).toHaveBeenCalledTimes(1)
     holder.remove()
   })
 })

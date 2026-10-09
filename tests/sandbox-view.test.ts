@@ -4,9 +4,9 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MapView } from '../src/client/MapView.tsx'
 import { readBasemap } from '../src/client/util.ts'
-import { MAP_SETTINGS_KEY, readMapSettings, sanitizeMapSettings, writeMapSettings } from '../src/track/map-settings.ts'
+import { DEFAULT_MAP_SETTINGS, MAP_SETTINGS_KEY, readMapSettings, sanitizeMapSettings, writeMapSettings } from '../src/track/map-settings.ts'
 import { SATELLITE_STYLE, type BasemapId } from '../src/track/basemaps.ts'
-import { TRACK_LINE } from '../src/track/trail-layer.ts'
+import { TRACK_COLOR, TRACK_LINE } from '../src/track/trail-layer.ts'
 import type { PlacemarkGroup, TrackPlacemark, TrackPoint } from '../src/protocol.ts'
 import type { SandboxPlacemark, TerrainGrid } from '../src/track/sandbox/types.ts'
 
@@ -131,11 +131,11 @@ const SANDBOX_GROUPS: PlacemarkGroup[] = [
     memberIds: ['hidden-member'], coordinates: [119.455, 30.355], hidden: true},
 ]
 type PlacemarkOptions = Pick<Parameters<typeof MapView>[0],
-  'placemarks' | 'placemarkGroups' | 'placemarkTypeFilter' | 'selectedPlacemark' | 'onSelectPlacemark' | 'onClosePlacemark'>
+  'placemarks' | 'placemarkGroups' | 'expandedPlacemarkGroups' | 'placemarkTypeFilter' | 'selectedPlacemark' | 'onSelectPlacemark' | 'onClosePlacemark'>
 function latestPlacemarkUpdate(renderer: FakeRenderer) {
   const call = renderer.updatePlacemarks.mock.calls.at(-1)
   if (!call) throw new Error('Missing sandbox placemark update')
-  return call as [readonly SandboxPlacemark[], {visible: boolean; selectedId: string | null; onSelect: (id: string) => void}]
+  return call as [readonly SandboxPlacemark[], {visible: boolean; selectedId: string | null; labelColor: string; labelSize: number; connectorColor: string; onSelect: (id: string) => void}]
 }
 let root: Root | null
 let container: HTMLDivElement
@@ -167,6 +167,15 @@ function button(text: string) {
 async function editColor(name: string, value: string) {
   const input = container.querySelector<HTMLInputElement>('[role="dialog"] input[aria-label="' + name + '"]')
   if (!input) throw new Error('Missing color setting ' + name)
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, value)
+    input.dispatchEvent(new Event('input', {bubbles: true}))
+  })
+}
+async function editDisplayValue(name: string, value: string) {
+  if (!container.querySelector('section[aria-label="标记点与路线设置"]')) await click('标记点与路线')
+  const input = container.querySelector<HTMLInputElement>('section[aria-label="标记点与路线设置"] input[aria-label="' + name + '"]')
+  if (!input) throw new Error('Missing display setting ' + name)
   await act(async () => {
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, value)
     input.dispatchEvent(new Event('input', {bubbles: true}))
@@ -551,12 +560,12 @@ describe('native terrain and live sandbox lighting', () => {
       expect.objectContaining({id: SANDBOX_GROUPS[0].id, coordinates: [119.45, 30.35], label: 'G1', title: '山口合影', groupCount: 2}),
       expect.objectContaining({id: 'tail', coordinates: [119.46, 30.36], label: '6', title: '终点'}),
     ])
-    expect(selection).toMatchObject({visible: true, selectedId: null})
+    expect(selection).toMatchObject({visible: true, selectedId: null, labelColor: '#ffffff', labelSize: 16, connectorColor: DEFAULT_MAP_SETTINGS.sandboxConnectorColor})
     await act(async () => selection.onSelect(SANDBOX_GROUPS[0].id))
     expect(onSelect).toHaveBeenLastCalledWith(SANDBOX_GROUPS[0].id)
     await render(POINTS, 'vector', vi.fn(), {...options, selectedPlacemark: 'group-a'})
     expect(latestPlacemarkUpdate(renderer)[1].selectedId).toBe(SANDBOX_GROUPS[0].id)
-    const details = container.querySelector<HTMLElement>('.trk-sandbox-details')!
+    const details = container.querySelector<HTMLElement>('.trk-map-details')!
     expect(details.querySelector('.trk-placemark-group-details')).not.toBeNull()
     expect(details.textContent).toContain('山口合影'); expect(details.textContent).toContain('组内说明')
     expect(details.querySelector('[data-group-member-id]')?.getAttribute('data-group-member-id')).toBe('group-a')
@@ -571,6 +580,99 @@ describe('native terrain and live sandbox lighting', () => {
     await click('关闭点位详情')
     expect(onClose).toHaveBeenCalledOnce()
     expect(renderer.build).toHaveBeenCalledOnce(); expect(state.sampler).toHaveBeenCalledOnce()
+  })
+
+  it('applies independently persisted text, connector and route colors from the display panel without rebuilding the sandbox', async () => {
+    const options = {placemarks: SANDBOX_PLACEMARKS, placemarkGroups: SANDBOX_GROUPS}
+    await render(POINTS, 'vector', vi.fn(), options)
+    await markerVisibilityControl()
+    expect(container.querySelector('input[aria-label="文字颜色"]')).toBeNull()
+    expect(container.querySelector('input[aria-label="连线颜色"]')).toBeNull()
+    await click('3D 沙盘'); await ready()
+    const renderer = state.renderers[0], map = state.maps[0]
+    const fits = map.fitBounds.mock.calls.length, styles = map.setStyle.mock.calls.length
+    await markerVisibilityControl()
+    expect(container.querySelector<HTMLInputElement>('input[aria-label="文字颜色"]')!.value).toBe('#ffffff')
+    expect(container.querySelector<HTMLInputElement>('input[aria-label="连线颜色"]')!.value).toBe(DEFAULT_MAP_SETTINGS.sandboxConnectorColor)
+    await editDisplayValue('文字颜色', '#abcdef')
+    expect(readMapSettings()).toMatchObject({sandboxLabelColor: '#abcdef', sandboxConnectorColor: DEFAULT_MAP_SETTINGS.sandboxConnectorColor, routeColor: TRACK_COLOR})
+    expect(latestPlacemarkUpdate(renderer)[1]).toMatchObject({labelColor: '#abcdef', connectorColor: DEFAULT_MAP_SETTINGS.sandboxConnectorColor})
+    await editDisplayValue('连线颜色', '#123456')
+    expect(readMapSettings()).toMatchObject({sandboxLabelColor: '#abcdef', sandboxConnectorColor: '#123456', routeColor: TRACK_COLOR})
+    expect(latestPlacemarkUpdate(renderer)[1]).toMatchObject({labelColor: '#abcdef', connectorColor: '#123456'})
+    await editDisplayValue('路线颜色', '#778899')
+    expect(renderer.updateRouteColor).toHaveBeenLastCalledWith('#778899')
+    expect(readMapSettings()).toMatchObject({sandboxLabelColor: '#abcdef', sandboxConnectorColor: '#123456', routeColor: '#778899'})
+    expect(latestPlacemarkUpdate(renderer)[1]).toMatchObject({labelColor: '#abcdef', connectorColor: '#123456'})
+    expect(renderer.build).toHaveBeenCalledOnce(); expect(renderer.dispose).not.toHaveBeenCalled()
+    expect(state.renderers).toEqual([renderer]); expect(state.sampler).toHaveBeenCalledOnce()
+    expect(map.fitBounds).toHaveBeenCalledTimes(fits); expect(map.setStyle).toHaveBeenCalledTimes(styles)
+    expect(selected('sandbox')).toBe(true)
+  })
+
+  it('changes floating text size live and persists it without resampling terrain or changing placemark coordinates', async () => {
+    const options = {placemarks: SANDBOX_PLACEMARKS, placemarkGroups: SANDBOX_GROUPS}
+    await render(POINTS, 'vector', vi.fn(), options); await click('3D 沙盘'); await ready()
+    const renderer = state.renderers[0], markers = latestPlacemarkUpdate(renderer)[0]
+    expect(latestPlacemarkUpdate(renderer)[1].labelSize).toBe(16)
+    await editDisplayValue('文字大小', '28')
+    expect(latestPlacemarkUpdate(renderer)[1].labelSize).toBe(28)
+    expect(latestPlacemarkUpdate(renderer)[0]).toEqual(markers)
+    expect(readMapSettings()).toMatchObject({sandboxLabelSize: 28, sandboxLabelColor: '#ffffff', sandboxConnectorColor: DEFAULT_MAP_SETTINGS.sandboxConnectorColor, routeColor: TRACK_COLOR})
+    expect(renderer.build).toHaveBeenCalledOnce(); expect(renderer.dispose).not.toHaveBeenCalled()
+    expect(state.renderers).toEqual([renderer]); expect(state.sampler).toHaveBeenCalledOnce()
+  })
+
+  it('uses the latest text size and colors when terrain loading finishes and responds to later storage updates in place', async () => {
+    const options = {placemarks: SANDBOX_PLACEMARKS, placemarkGroups: SANDBOX_GROUPS}
+    await render(POINTS, 'vector', vi.fn(), options); await click('3D 沙盘')
+    const pending = state.pending[0]
+    await editDisplayValue('文字颜色', '#aaccee'); await editDisplayValue('连线颜色', '#cc8844')
+    await editDisplayValue('路线颜色', '#335577')
+    await editDisplayValue('文字大小', '26')
+    expect(pending.signal.aborted).toBe(false); expect(state.pending).toEqual([pending])
+    expect(state.renderers).toHaveLength(0); expect(state.sampler).toHaveBeenCalledOnce()
+    await ready()
+    const renderer = state.renderers[0]
+    expect(renderer.build).toHaveBeenCalledWith(RESULT.terrain, POINTS, null, expect.objectContaining({routeColor: '#335577'}))
+    expect(latestPlacemarkUpdate(renderer)[1]).toMatchObject({labelColor: '#aaccee', labelSize: 26, connectorColor: '#cc8844'})
+    await act(async () => {
+      const next = writeMapSettings({...readMapSettings(), sandboxLabelColor: '#554433', sandboxLabelSize: 12, sandboxConnectorColor: '#33bb88'})
+      window.dispatchEvent(new StorageEvent('storage', {key: MAP_SETTINGS_KEY, newValue: JSON.stringify(next)}))
+    })
+    expect(latestPlacemarkUpdate(renderer)[1]).toMatchObject({labelColor: '#554433', labelSize: 12, connectorColor: '#33bb88'})
+    expect(readMapSettings().routeColor).toBe('#335577')
+    expect(renderer.build).toHaveBeenCalledOnce(); expect(renderer.dispose).not.toHaveBeenCalled()
+    expect(state.sampler).toHaveBeenCalledOnce(); expect(selected('sandbox')).toBe(true)
+  })
+
+  it('forwards updated source names and original child coordinates when a group is expanded without resampling terrain', async () => {
+    const onSelect = vi.fn(), groupId = SANDBOX_GROUPS[0].id
+    const options = {placemarks: SANDBOX_PLACEMARKS, placemarkGroups: SANDBOX_GROUPS, onSelectPlacemark: onSelect}
+    await render(POINTS, 'vector', vi.fn(), options); await click('3D 沙盘'); await ready()
+    const renderer = state.renderers[0]
+    expect(latestPlacemarkUpdate(renderer)[0].map(marker => marker.id)).toEqual(['solo', groupId, 'tail'])
+    const placemarks = SANDBOX_PLACEMARKS.map(point => point.id === 'group-a'
+      ? {...point, name: '更新后的山口', coordinates: [119.452, 30.352] as [number, number]} : point)
+    const groups = SANDBOX_GROUPS.map(group => group.id === groupId
+      ? {...group, name: '新的合影名称', coordinates: [119.454, 30.354] as [number, number]} : group)
+    await render(POINTS, 'vector', vi.fn(), {...options, placemarks, placemarkGroups: groups,
+      expandedPlacemarkGroups: new Set([groupId]), selectedPlacemark: 'group-a'})
+    const [markers, selection] = latestPlacemarkUpdate(renderer)
+    expect(markers).toEqual([
+      expect.objectContaining({id: 'solo', title: '河边'}),
+      expect.objectContaining({id: groupId, title: '新的合影名称', label: 'G1', coordinates: [119.454, 30.354]}),
+      expect.objectContaining({id: 'group-a', title: '更新后的山口', label: '3', coordinates: [119.452, 30.352]}),
+      expect.objectContaining({id: 'tail', title: '终点'}),
+    ])
+    expect(selection.selectedId).toBe('group-a')
+    await act(async () => selection.onSelect('group-a'))
+    expect(onSelect).toHaveBeenLastCalledWith('group-a')
+    await render(POINTS, 'vector', vi.fn(), {...options, placemarks, placemarkGroups: groups, selectedPlacemark: 'group-a'})
+    expect(latestPlacemarkUpdate(renderer)[0].map(marker => marker.id)).toEqual(['solo', groupId, 'tail'])
+    expect(latestPlacemarkUpdate(renderer)[1].selectedId).toBe(groupId)
+    expect(renderer.build).toHaveBeenCalledOnce(); expect(renderer.dispose).not.toHaveBeenCalled()
+    expect(state.sampler).toHaveBeenCalledOnce()
   })
 
   it('changes marker visibility immediately from the map display panel and clears details and photos without resampling or rebuilding', async () => {
@@ -611,8 +713,8 @@ describe('native terrain and live sandbox lighting', () => {
     expect(readMapSettings().sandboxPlacemarks).toBe(false)
     expect(latestPlacemarkUpdate(renderer)[0]).toEqual([])
     expect(latestPlacemarkUpdate(renderer)[1]).toMatchObject({visible: false, selectedId: null})
-    expect(container.querySelector('.trk-sandbox-details')?.hasAttribute('hidden')).toBe(true)
-    expect(container.querySelector('.trk-sandbox-details')?.childElementCount).toBe(0)
+    expect(container.querySelector('.trk-map-details')?.hasAttribute('hidden')).toBe(true)
+    expect(container.querySelector('.trk-map-details')?.childElementCount).toBe(0)
     expect(container.querySelector('.trk-placemark-photo-viewer')).toBeNull()
     await act(async () => toggle.click())
     expect(toggle.checked).toBe(true)
@@ -620,7 +722,7 @@ describe('native terrain and live sandbox lighting', () => {
     expect(document.activeElement).toBe(toggle)
     expect(readMapSettings().sandboxPlacemarks).toBe(true)
     expect(latestPlacemarkUpdate(renderer)[1]).toMatchObject({visible: true, selectedId: 'solo'})
-    expect(container.querySelector('.trk-sandbox-details')?.textContent).toContain('单点说明')
+    expect(container.querySelector('.trk-map-details')?.textContent).toContain('单点说明')
     expect(state.renderers).toEqual([renderer])
     expect(renderer.build).toHaveBeenCalledOnce(); expect(renderer.dispose).not.toHaveBeenCalled()
     expect(state.sampler).toHaveBeenCalledOnce()
@@ -649,7 +751,7 @@ describe('native terrain and live sandbox lighting', () => {
     const renderer = state.renderers[0], [hiddenMarkers, hiddenSelection] = latestPlacemarkUpdate(renderer)
     expect(hiddenMarkers).toEqual([])
     expect(hiddenSelection).toMatchObject({visible: false, selectedId: null})
-    expect(container.querySelector('.trk-sandbox-details')?.childElementCount).toBe(0)
+    expect(container.querySelector('.trk-map-details')?.childElementCount).toBe(0)
     const currentToggle = await markerVisibilityControl()
     expect(currentToggle.checked).toBe(false)
     await act(async () => currentToggle.click())
@@ -694,13 +796,13 @@ describe('native terrain and live sandbox lighting', () => {
       expect.objectContaining({id: SANDBOX_GROUPS[0].id, label: 'G1', groupCount: 1}),
     ])
     await render(POINTS, 'vector', vi.fn(), {...options, placemarkTypeFilter: 'type:风景', selectedPlacemark: SANDBOX_GROUPS[0].id})
-    expect(container.querySelector('.trk-sandbox-details')?.textContent).toContain('1 / 1')
+    expect(container.querySelector('.trk-map-details')?.textContent).toContain('1 / 1')
     await click('查看大图')
     expect(container.querySelector('.trk-placemark-photo-viewer-image')?.getAttribute('src')).toBe('https://example.com/pass.jpg')
     await render(POINTS, 'vector', vi.fn(), {...options, placemarkTypeFilter: 'untyped', selectedPlacemark: SANDBOX_GROUPS[0].id})
     expect(latestPlacemarkUpdate(renderer)[0]).toEqual([expect.objectContaining({id: 'tail', label: '6'})])
     expect(latestPlacemarkUpdate(renderer)[1].selectedId).toBeNull()
-    expect(container.querySelector('.trk-sandbox-details')?.childElementCount).toBe(0)
+    expect(container.querySelector('.trk-map-details')?.childElementCount).toBe(0)
     expect(container.querySelector('.trk-placemark-photo-viewer')).toBeNull()
     await render(POINTS, 'vector', vi.fn(), {...options, placemarkTypeFilter: ['type:补给', 'untyped']})
     expect(latestPlacemarkUpdate(renderer)[0]).toEqual([
@@ -711,7 +813,7 @@ describe('native terrain and live sandbox lighting', () => {
     await render(POINTS, 'vector', vi.fn(), {...options, placemarkTypeFilter: []})
     expect(latestPlacemarkUpdate(renderer)[0]).toEqual([])
     expect(latestPlacemarkUpdate(renderer)[1].selectedId).toBeNull()
-    expect(container.querySelector('.trk-sandbox-details')?.childElementCount).toBe(0)
+    expect(container.querySelector('.trk-map-details')?.childElementCount).toBe(0)
     expect(JSON.stringify({placemarks, groups: SANDBOX_GROUPS})).toBe(original)
     expect(state.renderers).toEqual([renderer]); expect(renderer.dispose).not.toHaveBeenCalled()
     expect(renderer.build).toHaveBeenCalledOnce(); expect(state.sampler).toHaveBeenCalledOnce()
