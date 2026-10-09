@@ -33,7 +33,8 @@
     "tsconfig.json",
     "vitest.config.ts",
     "build-inputs/",
-    ".yarnrc.yml"
+    ".yarnrc.yml",
+    ".gitattributes"
   ],
   "dsh": {
     "bundle": {
@@ -113,5 +114,10 @@
     "registry": "https://registry.npmjs.org/",
     "tag": "beta",
     "access": "public"
+  },
+  "trackSource": {
+    "baseCommit": "91677b21307aa1fa8839412e60cf1da7690e7695",
+    "dirty": false,
+    "sourceSnapshotSha256": "be8c768c876a6dfb1cf8b8cad210f98164c0f01e1cab16e6cb9ea1f9eae8e13d"
   }
 }
