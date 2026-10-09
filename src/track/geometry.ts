@@ -13,16 +13,23 @@
  */
 import type { TrackPoint } from '../protocol.ts'
 
-/** A position as GeoJSON shapes it: `[lon, lat]` or `[lon, lat, ele]`. */
-type Position = readonly number[]
+/** Positions may also carry a vendor timestamp in their fourth slot. */
+type Position = readonly unknown[]
 
 type Geometry = {
   type: string
   coordinates?: unknown
 }
 
+type Feature = {
+  geometry?: unknown
+  properties?: {name?: unknown; coordinateProperties?: {times?: unknown}}
+}
+
 export interface FlattenedTrack {
   points: TrackPoint[]
+  /** Source line/run boundaries in the flattened array. */
+  segmentStarts: number[]
   /** Track name the file itself carries, when it has one. */
   name: string
   /** Earliest / latest timestamp seen, as epoch milliseconds. */
@@ -42,13 +49,25 @@ function toEpoch(value: unknown): number | null {
  *
  * `toGeoJSON` writes a `Trackpoint`'s time into `coordinates` as a fourth
  * element — `[lon, lat, altitude, "2026-09-20T01:00:00Z"]` — as well as into
- * `coordinateProperties.times`. Reading that slot as a number would turn every
- * TCX elevation into `NaN`; the times array is the better source when it is
- * there, and this is the fallback for when it is not.
+ * `coordinateProperties.times`. The position's own timestamp is authoritative:
+ * the vendor's separate array can omit a missing time and shift later entries.
  */
 function timeOf(position: Position): number | null {
-  const trailing = position[3]
-  return typeof trailing === 'string' ? toEpoch(trailing) : null
+  return toEpoch(position[3])
+}
+
+/** Feature boundaries also delimit timestamp arrays; they must never be zipped globally. */
+function* featuresOf(geoJson: unknown): Generator<Feature> {
+  if (!geoJson || typeof geoJson !== 'object') return
+  const node = geoJson as {type?: string; features?: unknown}
+  if (node.type === 'FeatureCollection') {
+    for (const feature of Array.isArray(node.features) ? node.features : []) yield* featuresOf(feature)
+  } else if (node.type === 'Feature') {
+    yield geoJson as Feature
+  } else {
+    // Bare geometries remain usable, with their own fourth-slot timestamps.
+    yield {geometry: geoJson}
+  }
 }
 
 /**
@@ -95,20 +114,21 @@ function nestDepth(type: string): number {
   }
 }
 
-function positionsOf(geometry: Geometry): Position[] {
+function positionsOf(geometry: Geometry): {positions: Position[]; starts: Set<number>} {
   const depth = nestDepth(typeof geometry.type === 'string' ? geometry.type : '')
-  if (depth < 0 || !Array.isArray(geometry.coordinates)) return []
-  const positions: Position[] = []
+  const positions: Position[] = [], starts = new Set<number>()
+  if (depth < 0 || !Array.isArray(geometry.coordinates)) return {positions, starts}
   const walk = (value: unknown, level: number) => {
     if (!Array.isArray(value)) return
     if (level === 0) {
       positions.push(value as Position)
       return
     }
+    if (level === 1) starts.add(positions.length)
     for (const child of value) walk(child, level - 1)
   }
   walk(geometry.coordinates, depth)
-  return positions
+  return {positions, starts}
 }
 
 /**
@@ -117,36 +137,44 @@ function positionsOf(geometry: Geometry): Position[] {
  */
 function toPoint(position: Position, time: number | null): TrackPoint | null {
   if (!Array.isArray(position) || position.length < 2) return null
-  const lon = Number(position[0])
-  const lat = Number(position[1])
-  if (!Number.isFinite(lon) || !Number.isFinite(lat)) return null
+  const lon = position[0], lat = position[1]
+  if (typeof lon !== 'number' || typeof lat !== 'number' || !Number.isFinite(lon) || !Number.isFinite(lat)
+    || Math.abs(lon) > 180 || Math.abs(lat) > 90) return null
   const rawElevation = position[2]
   const elevation = typeof rawElevation === 'number' && Number.isFinite(rawElevation) ? rawElevation : null
-  return [lon, lat, elevation, time ?? timeOf(position)]
+  return [lon, lat, elevation, timeOf(position) ?? time]
 }
 
-/** All `coordinateProperties.times` in the collection, in document order. */
-function timesOf(geoJson: unknown): (number | null)[] {
+/** Flatten a timestamp list without dropping null / invalid placeholders. */
+function flatTimesOf(value: unknown): (number | null)[] {
   const times: (number | null)[] = []
-  if (!geoJson || typeof geoJson !== 'object') return times
-  const features = (geoJson as {features?: unknown}).features
-  for (const feature of Array.isArray(features) ? features : []) {
-    const properties = (feature as {properties?: {coordinateProperties?: {times?: unknown}}})?.properties
-    const list = properties?.coordinateProperties?.times
-    if (!Array.isArray(list)) continue
-    for (const value of list) times.push(toEpoch(value))
+  const walk = (child: unknown) => {
+    if (Array.isArray(child)) {
+      for (const value of child) walk(value)
+    } else {
+      times.push(toEpoch(child))
+    }
   }
+  if (Array.isArray(value)) walk(value)
   return times
 }
 
-/** Name carried by the document's first named feature, if any. */
-function nameOf(geoJson: unknown): string {
-  const features = (geoJson as {features?: unknown})?.features
-  for (const feature of Array.isArray(features) ? features : []) {
-    const name = (feature as {properties?: {name?: unknown}})?.properties?.name
-    if (typeof name === 'string' && name.trim()) return name.trim()
+/** Match nested line / polygon time arrays to the same coordinate branches. */
+function shapedTimesOf(geometry: Geometry, value: unknown): (number | null)[] {
+  if (!Array.isArray(value) || !value.some(Array.isArray)) return flatTimesOf(value)
+  const times: (number | null)[] = []
+  const walk = (coordinates: unknown, depth: number, branchTimes: unknown) => {
+    if (!Array.isArray(coordinates)) return
+    if (depth === 0) {
+      times.push(toEpoch(branchTimes))
+      return
+    }
+    for (let index = 0; index < coordinates.length; index += 1) {
+      walk(coordinates[index], depth - 1, Array.isArray(branchTimes) ? branchTimes[index] : undefined)
+    }
   }
-  return ''
+  walk(geometry.coordinates, nestDepth(geometry.type), value)
+  return times
 }
 
 function timeRange(points: readonly TrackPoint[]): {startedAt: number | null; endedAt: number | null} {
@@ -167,20 +195,39 @@ function timeRange(points: readonly TrackPoint[]): {startedAt: number | null; en
  * stay elevation-less rather than being flattened to 0).
  */
 export function flattenGeoJSON(geoJson: unknown, fallbackName = ''): FlattenedTrack {
-  const times = timesOf(geoJson)
-  const points: TrackPoint[] = []
-  let cursor = 0
+  const points: TrackPoint[] = [], segmentStarts: number[] = []
+  let name = ''
 
-  for (const geometry of geometriesOf(geoJson)) {
-    const positions = positionsOf(geometry)
-    for (let index = 0; index < positions.length; index += 1) {
-      const point = toPoint(positions[index], times[cursor + index] ?? null)
-      if (point) points.push(point)
+  for (const feature of featuresOf(geoJson)) {
+    const geometries = [...geometriesOf(feature.geometry)]
+    const featureTimes = feature.properties?.coordinateProperties?.times
+    const flatTimes = geometries.length > 1 ? flatTimesOf(featureTimes) : []
+    const groupedTimes = geometries.length > 1 && Array.isArray(featureTimes)
+      && featureTimes.length === geometries.length && featureTimes.some(Array.isArray)
+    let cursor = 0
+
+    for (let geometryIndex = 0; geometryIndex < geometries.length; geometryIndex += 1) {
+      const geometry = geometries[geometryIndex]
+      const {positions, starts} = positionsOf(geometry)
+      const times = groupedTimes
+        ? shapedTimesOf(geometry, featureTimes[geometryIndex])
+        : geometries.length === 1 ? shapedTimesOf(geometry, featureTimes) : flatTimes.slice(cursor, cursor + positions.length)
+      let newRun = true
+      for (let index = 0; index < positions.length; index += 1) {
+        if (starts.has(index)) newRun = true
+        const point = toPoint(positions[index], times[index] ?? null)
+        if (point) {
+          if (newRun) segmentStarts.push(points.length)
+          newRun = false
+          points.push(point)
+          const candidate = feature.properties?.name
+          if (!name && typeof candidate === 'string' && candidate.trim()) name = candidate.trim()
+        } else newRun = true
+      }
+      // Invalid fixes retain their slots so every later timestamp stays aligned.
+      cursor += positions.length
     }
-    // Advance by positions *seen*, not points kept, so a dropped fix does not
-    // shift every later timestamp onto the wrong coordinate.
-    cursor += positions.length
   }
 
-  return {points, name: fallbackName || nameOf(geoJson), ...timeRange(points)}
+  return {points, segmentStarts, name: fallbackName || name, ...timeRange(points)}
 }

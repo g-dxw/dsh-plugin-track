@@ -32,16 +32,22 @@ export function formatElevation(meters?: number | null): string {
   return `${meters > 0 ? '+' : ''}${Math.round(meters)} m`
 }
 
-/** Milliseconds → `1 小时 24 分` / `24 分 06 秒`. */
+/** Milliseconds → `1 小时 24 分 06 秒` / `24 分 06 秒`. */
 export function formatDuration(milliseconds: number): string {
   if (!Number.isFinite(milliseconds) || milliseconds <= 0) return '-'
   const total = Math.round(milliseconds / 1000)
   const hours = Math.floor(total / 3600)
   const minutes = Math.floor((total % 3600) / 60)
   const seconds = total % 60
-  if (hours) return `${hours} 小时 ${minutes} 分`
+  if (hours) return `${hours} 小时 ${minutes} 分 ${String(seconds).padStart(2, '0')} 秒`
   if (minutes) return `${minutes} 分 ${String(seconds).padStart(2, '0')} 秒`
   return `${seconds} 秒`
+}
+
+/** Consistent with the displayed route length and elapsed time; unknown time stays unknown. */
+export function formatAverageSpeed(distance: number, duration: number): string {
+  if (!Number.isFinite(distance) || distance < 0 || !Number.isFinite(duration) || duration <= 0) return '-'
+  return `${(distance / duration * 3600).toFixed(2)} km/h`
 }
 
 /** Local `YYYY-MM-DD HH:mm`, for the track list. */

@@ -1,9 +1,9 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { resolveDshHome } from '@deepseek-ai/dsh-home-paths'
 import {
   extensionOf,
-  type TrackExtension, type TrackMetrics, type TrackPoint, type TrackRecord, type TrackSummary,
+  type TrackExtension, type TrackMetrics, type TrackPoint, type TrackRecord, type TrackSummary, type TrackPlacemark,
 } from './protocol.ts'
 
 /**
@@ -48,6 +48,8 @@ function validId(id: string): boolean {
 /** What `track.json` holds on disk. */
 interface TrackFile extends TrackSummary {
   coordinates: TrackPoint[]
+  placemarks?: TrackPlacemark[]
+  segmentStarts?: number[]
 }
 
 /** One track's metadata, or `null` when the directory is not a readable track. */
@@ -76,7 +78,7 @@ export function listTracks(env: NodeJS.ProcessEnv = process.env): TrackSummary[]
   for (const id of readdirSync(root)) {
     const found = read(id, env)
     if (!found) continue
-    const {coordinates, ...summary} = found
+    const {coordinates, placemarks: _placemarks, segmentStarts: _segmentStarts, ...summary} = found
     tracks.push({...summary, points: coordinates.length})
   }
   return tracks.sort((left, right) => right.createdAt.localeCompare(left.createdAt))
@@ -134,6 +136,8 @@ export function writeTrack(input: {
   filename: string
   source: string
   points: TrackPoint[]
+  placemarks?: TrackPlacemark[]
+  segmentStarts?: number[]
   metrics: TrackMetrics
 }, env: NodeJS.ProcessEnv = process.env): TrackSummary {
   const root = tracksRoot(env)
@@ -156,9 +160,15 @@ export function writeTrack(input: {
     metrics: input.metrics,
   }
 
-  writeFileSync(join(dir, 'track.json'), JSON.stringify({...summary, coordinates: input.points}), 'utf8')
-  writeFileSync(join(dir, `source.${format}`), input.source, 'utf8')
-  return summary
+  try {
+    writeFileSync(join(dir, 'track.json'), JSON.stringify({...summary, coordinates: input.points, ...(input.placemarks ? {placemarks: input.placemarks} : {}), ...(input.segmentStarts === undefined ? {} : {segmentStarts: [...input.segmentStarts]})}), 'utf8')
+    writeFileSync(join(dir, `source.${format}`), input.source, 'utf8')
+    return summary
+  } catch (error) {
+    // This directory was minted by this call. Never roll back an outside path.
+    if (dirname(resolve(dir)) === resolve(root)) rmSync(dir, {recursive: true, force: true})
+    throw error
+  }
 }
 
 /** `2026-09-22T10-30-00-000Z`, then `-2`, `-3`… until the directory is free. */
@@ -166,4 +176,16 @@ function uniqueId(root: string, base: string): string {
   let id = base
   for (let suffix = 2; existsSync(join(root, id)); suffix += 1) id = `${base}-${suffix}`
   return id
+}
+
+/** Save split results together; a failed batch removes only copies created by it. */
+export function writeTrackBatch(inputs: readonly Parameters<typeof writeTrack>[0][], env: NodeJS.ProcessEnv = process.env): TrackSummary[] {
+  const written: TrackSummary[] = []
+  try {
+    for (const input of inputs) written.push(writeTrack(input, env))
+    return written
+  } catch (error) {
+    for (const track of written) removeTrack(track.id, env)
+    throw error
+  }
 }

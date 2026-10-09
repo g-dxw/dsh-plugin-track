@@ -32,9 +32,14 @@ export function smoothElevations(positions: Position[], windowSize: number): Pos
 
     // Create a new array with smoothed elevations
     return positions.map((pos, i, arr) => {
-        const start = Math.max(0, i - Math.floor(windowSize / 2)); // Start index for the window
-        const end = Math.min(arr.length, i + Math.floor(windowSize / 2) + 1); // End index for the window
-        const segment = arr.slice(start, end); // Extract the positions in the window
+        // A hand-drawn or moved point has no measured altitude. Keep a real gap,
+        // and do not let it poison neighbouring samples or bridge two recordings.
+        if (!Number.isFinite(pos[2])) return [pos[0], pos[1]] as Position;
+        let start = Math.max(0, i - Math.floor(windowSize / 2));
+        let end = Math.min(arr.length, i + Math.floor(windowSize / 2) + 1);
+        for (let j = i - 1; j >= start; j--) if (!Number.isFinite(arr[j][2])) { start = j + 1; break; }
+        for (let j = i + 1; j < end; j++) if (!Number.isFinite(arr[j][2])) { end = j; break; }
+        const segment = arr.slice(start, end);
 
         // Calculate the weighted moving average of elevations
         const weights = segment.map((_, idx) => idx + 1); // Increasing weights: 1, 2, 3...

@@ -6,10 +6,11 @@
  * importing is the only sequence with an order that matters (parse, then store,
  * then reload the list, then open what was just stored).
  */
-import { useCallback, useEffect, useState } from 'react'
-import type { TrackInput, TrackRecord, TrackSummary } from '../protocol.ts'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { API, METRICS_VERSION, type TrackInput, type TrackRecord, type TrackSummary } from '../protocol.ts'
 import { api } from './util.ts'
 import { parseTrackFile } from '../track/import.ts'
+import { pointMetrics } from '../track/metrics.ts'
 
 export interface TracksState {
   list: TrackSummary[]
@@ -22,7 +23,8 @@ export interface TracksState {
   openTrack: (id: string) => void
   closeTrack: () => void
   importFiles: (files: readonly File[]) => void
-  remove: (id: string) => void
+  remove: (id: string) => Promise<boolean>
+  saveEdited: (inputs: readonly TrackInput[]) => Promise<void>
   clearError: () => void
   setNote: (note: string) => void
 }
@@ -32,10 +34,17 @@ export function useTracks(): TracksState {
   const [open, setOpen] = useState<TrackRecord | null>(null)
   const [error, setError] = useState('')
   const [note, setNote] = useState('')
+  const openRequest = useRef(0)
+  const removedIds = useRef(new Set<string>())
+  const removals = useRef(new Map<string, Promise<boolean>>())
+  const recalculated = useRef(new Map<string, TrackRecord>())
 
   const refresh = useCallback(() => {
     api<TrackSummary[]>('tracks')
-      .then(setList)
+      .then(tracks => {setList(tracks.filter(track => !removedIds.current.has(track.id)).map(track => {
+        const updated = recalculated.current.get(track.id)
+        return updated ? {...track, metrics: updated.metrics} : track
+      })); setError('')})
       // A read that fails must not wipe what is already on screen: the panel is
       // most useful offline, and that is exactly when the list request may fail.
       .catch((cause: unknown) => setError(message(cause)))
@@ -44,13 +53,41 @@ export function useTracks(): TracksState {
   useEffect(() => { refresh() }, [refresh])
 
   const openTrack = useCallback((id: string) => {
+    if (removedIds.current.has(id)) return
+    const request = ++openRequest.current
     setError('')
+    setNote('')
     api<TrackRecord>(`track?id=${encodeURIComponent(id)}`)
-      .then(setOpen)
-      .catch((cause: unknown) => setError(message(cause)))
+      .then(async track => {
+        const current = () => openRequest.current === request && !removedIds.current.has(id)
+        if (!current()) return
+        const cached = recalculated.current.get(id)
+        if (cached) {setOpen({...track, metrics: cached.metrics, coordinates: cached.coordinates}); return}
+        if (track.metrics.calculationVersion === METRICS_VERSION) {setOpen(track); return}
+        // Old imports keep their original text. Re-read it for summary times and
+        // corrected timestamp association, preserving titles and annotation anchors.
+        let updated: TrackRecord = {...track, metrics: {...pointMetrics(track.coordinates), calculationVersion: METRICS_VERSION}}
+        let sourceUnavailable = false
+        try {
+          const response = await fetch(`${API}/source?id=${encodeURIComponent(id)}`)
+          if (!response.ok) throw new Error('原文件无法读取')
+          const parsed = parseTrackFile(track.filename, await response.text())
+          if (parsed.points.length === track.coordinates.length && parsed.points.every((point, index) =>
+            point[0] === track.coordinates[index][0] && point[1] === track.coordinates[index][1] && point[2] === track.coordinates[index][2])) {
+            updated = {...track, metrics: parsed.metrics, coordinates: parsed.points}
+          }
+        } catch {sourceUnavailable = true}
+        if (!current()) return
+        // A temporary source failure must be retried when the track is reopened.
+        if (!sourceUnavailable) recalculated.current.set(id, updated)
+        setOpen(updated)
+        setList(previous => previous.map(item => item.id === id ? {...item, metrics: updated.metrics} : item))
+        if (sourceUnavailable) setNote('原文件暂时无法读取，已按保存的轨迹点重算统计。')
+      })
+      .catch((cause: unknown) => { if (openRequest.current === request && !removedIds.current.has(id)) setError(message(cause)) })
   }, [])
 
-  const closeTrack = useCallback(() => { setOpen(null) }, [])
+  const closeTrack = useCallback(() => { openRequest.current += 1; setOpen(null) }, [])
 
   const importFiles = useCallback((files: readonly File[]) => {
     void (async () => {
@@ -75,17 +112,42 @@ export function useTracks(): TracksState {
   }, [openTrack])
 
   const remove = useCallback((id: string) => {
-    api(`track?id=${encodeURIComponent(id)}`, {})
-      .then(() => {
+    const pending = removals.current.get(id)
+    if (pending) return pending
+    const request = (async () => {
+      setError('')
+      setNote('')
+      try {
+        await api(`track?id=${encodeURIComponent(id)}`, {}, 'DELETE')
+        removedIds.current.add(id)
+        recalculated.current.delete(id)
         setList(previous => previous.filter(item => item.id !== id))
         setOpen(current => current?.id === id ? null : current)
-      })
-      .catch((cause: unknown) => setError(message(cause)))
+        try { localStorage.removeItem(`cqai-track.animation-script.${id}`); localStorage.removeItem(`cqai-track.video-script.${id}`) } catch { /* optional browser cache */ }
+        setNote('轨迹已删除。')
+        return true
+      } catch (cause) {
+        setError(message(cause))
+        return false
+      } finally {
+        removals.current.delete(id)
+      }
+    })()
+    removals.current.set(id, request)
+    return request
   }, [])
 
+  const saveEdited = useCallback(async (inputs: readonly TrackInput[]) => {
+    const saved = await api<TrackSummary[]>('edited-tracks', {tracks: inputs})
+    openRequest.current += 1
+    setList(previous => [...saved, ...previous])
+    if (saved[0] && inputs[0]) setOpen({...saved[0], coordinates: inputs[0].points})
+    setError('')
+    setNote(`已保存 ${saved.length} 条轨迹副本，原始轨迹保留。`)
+  }, [])
   return {
     list, open, error, note,
-    refresh, openTrack, closeTrack, importFiles, remove,
+    refresh, openTrack, closeTrack, importFiles, remove, saveEdited,
     clearError: () => setError(''),
     setNote,
   }

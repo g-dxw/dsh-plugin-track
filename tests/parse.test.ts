@@ -13,7 +13,7 @@ import { parseTrackFile } from '../src/track/import.ts'
 import { UPLOADS, validateUpload } from '../src/protocol.ts'
 import {
   GPX_EMPTY, GPX_NO_ELEVATION, GPX_ROUTE_ONLY, GPX_TRACK, GPX_UNTERMINATED,
-  KML_TRACK, LEG_METRES, MINUTE, NOT_GPX, STEP, T0, TCX_SINGLE_POINT, TCX_TRACK,
+  KML_TRACK, KML_WAYPOINT_FIRST, LEG_METRES, SURFACE_METRES, MINUTE, NOT_GPX, STEP, T0, TCX_SINGLE_POINT, TCX_TRACK,
 } from './fixtures.ts'
 
 describe('a GPX with elevation and time', () => {
@@ -32,8 +32,8 @@ describe('a GPX with elevation and time', () => {
     expect(parsed.points.map(point => point[3])).toEqual([T0, T0 + STEP, T0 + 2 * STEP])
   })
 
-  it('sums the raw legs into one distance', () => {
-    expect(parsed.metrics.distance).toBeCloseTo(2 * LEG_METRES, 6)
+  it('sums the surface legs into one distance', () => {
+    expect(parsed.metrics.distance).toBeCloseTo(SURFACE_METRES, 6)
   })
 
   it('reports gain and loss from the smoothed accumulator', () => {
@@ -55,8 +55,8 @@ describe('a GPX with elevation and time', () => {
     expect(parsed.metrics.bbox).toEqual([120, 30, 120.02, 30])
   })
 
-  it('names the file from its metadata block', () => {
-    expect(parsed.name).toBe('测试环线')
+  it('uses the filename even when metadata carries a different name', () => {
+    expect(parsed.name).toBe('morning')
   })
 })
 
@@ -79,8 +79,8 @@ describe('a GPX with no elevation at all', () => {
     expect(parsed.metrics.duration).toBe(0)
   })
 
-  it('falls back to the track element for a name when there is no metadata', () => {
-    expect(parsed.name).toBe('无海拔')
+  it('uses the filename even when the track element has a name', () => {
+    expect(parsed.name).toBe('walk')
   })
 })
 
@@ -115,13 +115,47 @@ describe('a KML LineString', () => {
   })
 
   it('shares the distance and elevation arithmetic with the GPX path', () => {
-    expect(parsed.metrics.distance).toBeCloseTo(2 * LEG_METRES, 6)
+    expect(parsed.metrics.distance).toBeCloseTo(SURFACE_METRES, 6)
     expect(parsed.metrics.elevationGain).toBeCloseTo(20, 6)
     expect(parsed.metrics.duration).toBe(0)
   })
 
-  it('takes the Placemark name', () => {
-    expect(parsed.name).toBe('测试路线')
+  it('uses the filename rather than the Placemark name', () => {
+    expect(parsed.name).toBe('route')
+  })
+
+  it('uses the filename and keeps the starting waypoint name separately', () => {
+    const result = parseTrackFile('武功山反穿.kml', KML_WAYPOINT_FIRST)
+    expect(result.name).toBe('武功山反穿')
+    expect(result.placemarks?.[0].name).toBe('起点')
+    expect(result.points).toEqual(parsed.points)
+  })
+
+  it('uses the filename for an unnamed route instead of a point name', () => {
+    const source = KML_WAYPOINT_FIRST.replace('<name>测试路线</name>', '')
+    expect(parseTrackFile('峨眉山.kml', source).name).toBe('峨眉山')
+  })
+
+  it('uses the filename regardless of document and route names', () => {
+    const source = KML_WAYPOINT_FIRST.replace('<Document>', '<Document><name>峨眉山环线</name>')
+    expect(parseTrackFile('峨眉山.kml', source).name).toBe('峨眉山')
+    expect(parseTrackFile('峨眉山.kml', source.replace('<name>测试路线</name>', '')).name).toBe('峨眉山')
+  })
+
+  it('uses the filename with a mixed GeometryCollection', () => {
+    const source = KML_WAYPOINT_FIRST.replace('<LineString>', '<MultiGeometry><Point><coordinates>121,31</coordinates></Point><LineString>')
+      .replace('</LineString>', '</LineString></MultiGeometry>')
+    expect(parseTrackFile('route.kml', source).name).toBe('route')
+  })
+
+  it('ignores a named Placemark without geometry before the route', () => {
+    const source = KML_TRACK.replace('<Document>', '<Document><Placemark><name>起点</name></Placemark>')
+    expect(parseTrackFile('route.kml', source).name).toBe('route')
+  })
+
+  it('ignores a named line that contains no valid coordinates', () => {
+    const source = KML_TRACK.replace('<Document>', '<Document><Placemark><name>损坏线路</name><LineString><coordinates>bad,invalid</coordinates></LineString></Placemark>')
+    expect(parseTrackFile('route.kml', source).name).toBe('route')
   })
 
   it('refuses a document whose root is not <kml>', () => {
@@ -140,7 +174,7 @@ describe('a TCX activity', () => {
   })
 
   it('computes the same statistics the GPX file of the same shape gets', () => {
-    expect(parsed.metrics.distance).toBeCloseTo(2 * LEG_METRES, 6)
+    expect(parsed.metrics.distance).toBeCloseTo(SURFACE_METRES, 6)
     expect(parsed.metrics.elevationGain).toBeCloseTo(20, 6)
     expect(parsed.metrics.duration).toBe(20 * MINUTE)
   })
@@ -158,6 +192,15 @@ describe('a TCX activity', () => {
 })
 
 describe('upload validation, before any parsing happens', () => {
+  it.each([
+    {filename: '  晨跑.第二天.GPX', source: GPX_TRACK, name: '晨跑.第二天'},
+    {filename: '峨眉山.v2.KML', source: KML_TRACK, name: '峨眉山.v2'},
+    {filename: '123.tcx', source: TCX_TRACK, name: '123'},
+    {filename: '.gpx', source: GPX_TRACK, name: '.gpx'},
+  ])('defaults $filename to $name', ({filename, source, name}) => {
+    expect(parseTrackFile(filename, source).name).toBe(name)
+  })
+
   it('accepts the three formats it knows', () => {
     expect(validateUpload('a.gpx', '<gpx/>')).toBeNull()
     expect(validateUpload('a.kml', '<kml/>')).toBeNull()

@@ -1,7 +1,7 @@
 {
   "name": "cqai-dsh-plugin-track",
   "version": "0.1.0",
-  "description": "轨迹：导入 GPX / KML / TCX，在地图上画线，给出海拔剖面与统计",
+  "description": "轨迹：二维与 3D 沙盘、卫星底图、分析编辑、SVG 标注和 AI 动画美化",
   "license": "AGPL-3.0-only",
   "type": "module",
   "packageManager": "yarn@4.18.0",
@@ -17,6 +17,10 @@
   "files": [
     "lib/index.js",
     "lib/client.js",
+    "scripts/openmontage_bridge.py",
+    "scripts/openmontage_zh_cn.js",
+    "scripts/openmontage_ui.css",
+    "scripts/openmontage_ui.js",
     "cordis.patch.yml",
     "README.md",
     "PROVENANCE.md",
@@ -32,7 +36,12 @@
         "@deepseek-ai/dsh-client-ui-layout",
         "@deepseek-ai/dsh-client-ui-sidebar",
         "@deepseek-ai/dsh-client-ui-slots",
-        "@deepseek-ai/dsh-client-ui-renderer"
+        "@deepseek-ai/dsh-client-ui-renderer",
+        "@deepseek-ai/dsh-api-session-controller",
+        "@deepseek-ai/dsh-api-workspace-controller",
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-ui-session",
+        "@deepseek-ai/dsh-client-ui-workspace"
       ]
     }
   },
@@ -42,10 +51,15 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@panzoom/panzoom": "4.6.2",
     "chart.js": "^4.5.1",
     "chartjs-plugin-crosshair": "^2.0.0",
     "chartjs-plugin-zoom": "^2.2.0",
-    "maplibre-gl": "^5.24.0"
+    "immer": "10.1.1",
+    "maplibre-gl": "^5.24.0",
+    "mediabunny": "1.24.2",
+    "sharp": "0.35.5",
+    "three": "^0.185.0"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.2",
@@ -69,11 +83,13 @@
     "@types/node": "^22.20.0",
     "@types/react": "~18.3.1",
     "@types/react-dom": "~18.3.1",
+    "@types/three": "^0.185.0",
     "jsdom": "29.1.1",
     "react": "^18.3.1",
     "react-dom": "18.3.1",
     "tsdown": "0.22.2",
     "typescript": "~5.7.2",
+    "vite": "8.2.1",
     "vitest": "4.1.8"
   }
 }

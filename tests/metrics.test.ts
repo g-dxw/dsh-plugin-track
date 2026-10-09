@@ -10,8 +10,7 @@
  * suites cannot drift apart.
  */
 import { describe, expect, it } from 'vitest'
-import GpxMetricsComputation from '../src/track/model/gpx-metrics-computation.ts'
-import { pointMetrics, THRESHOLD_XY_M, THRESHOLD_Z_M } from '../src/track/metrics.ts'
+import { pointMetrics } from '../src/track/metrics.ts'
 import type { TrackPoint } from '../src/protocol.ts'
 import { LEG_METRES } from './fixtures.ts'
 
@@ -21,15 +20,6 @@ const DEGREE_M = LEG_METRES / 0.01
 /** A point `offset` metres east of the origin, at the fixtures' latitude. */
 function point(offset: number, elevation: number | null, time: number | null = null): TrackPoint {
   return [120 + offset / DEGREE_M, 30, elevation, time]
-}
-
-/** The ported accumulator, driven the way `GPX.getTotals()` drives it. */
-function nativeTotals(points: readonly TrackPoint[]) {
-  const computation = new GpxMetricsComputation(THRESHOLD_XY_M, THRESHOLD_Z_M)
-  for (const [lon, lat, elevation] of points) {
-    computation.addAndFilter({$: {lat, lon}, ele: elevation})
-  }
-  return computation
 }
 
 describe('a track with nothing in it', () => {
@@ -67,13 +57,26 @@ describe('distance', () => {
   it('keeps counting legs that the elevation smoothing ignores', () => {
     // Two metres between samples is under the 5 m XY bar, so the smoothing never
     // advances — but the walk still happened.
-    const jittered = [
-      point(0, 100), point(1.9259526243125623, 103), point(3.8519052486251246, 100),
-      point(5.7778578729376869, 103), point(7.7038104972502492, 100),
-    ]
+    const jittered = [0, 1, 2, 3, 4].map(index => point(index * LEG_METRES / 500, 100))
     const metrics = pointMetrics(jittered)
     expect(metrics.distance).toBeCloseTo(4 * (LEG_METRES / 500), 6)
     expect(metrics.elevationGain).toBe(0)
+    expect(metrics.elevationLoss).toBe(0)
+  })
+
+  it('measures a slope using both the horizontal leg and its measured height change', () => {
+    const metrics = pointMetrics([point(0, 100), point(LEG_METRES, 130)])
+    // Pythagoras, using the independently measured horizontal fixture leg.
+    expect(metrics.distance).toBeCloseTo(Math.sqrt(LEG_METRES ** 2 + 30 ** 2), 6)
+    expect(metrics.distance).toBeGreaterThan(LEG_METRES)
+  })
+
+  it('uses horizontal distance for each leg with an unknown endpoint height', () => {
+    const metrics = pointMetrics([
+      point(0, 100), point(LEG_METRES, null), point(2 * LEG_METRES, 200), point(3 * LEG_METRES, 220),
+    ])
+    expect(metrics.distance).toBeCloseTo(2 * LEG_METRES + Math.sqrt(LEG_METRES ** 2 + 20 ** 2), 6)
+    expect(metrics.elevationGain).toBe(20)
     expect(metrics.elevationLoss).toBe(0)
   })
 })
@@ -86,8 +89,7 @@ describe('elevation gain and loss', () => {
   })
 
   it('refuses a rise smaller than the 5 m bar, however far it was walked', () => {
-    // The raw accumulator would call this 3 m of climb. `getTotals()` reports the
-    // smoothed one, and 3 m is inside the noise band it exists to suppress.
+    // A 3 m drift stays inside the existing climb noise threshold.
     const metrics = pointMetrics([point(0, 100), point(LEG_METRES, 101.5), point(2 * LEG_METRES, 103)])
     expect(metrics.elevationGain).toBe(0)
     expect(metrics.elevationLoss).toBe(0)
@@ -108,6 +110,62 @@ describe('elevation gain and loss', () => {
     // 103 and 100 are both inside the smoothed band; the peak is still the peak.
     expect(metrics.elevationMax).toBe(120)
     expect(metrics.elevationMin).toBe(100)
+  })
+
+  it('rejects an isolated elevation spike without adding a vertical detour', () => {
+    const heights = [100, 100, 100, 100, 200, 100, 100, 100, 100]
+    const metrics = pointMetrics(heights.map((height, index) => point(index * LEG_METRES, height)))
+    expect(metrics.elevationGain).toBe(0)
+    expect(metrics.elevationLoss).toBe(0)
+    expect(metrics.distance).toBeCloseTo(8 * LEG_METRES, 6)
+    // Filtering the profile must not discard the measured high/low cards.
+    expect(metrics.elevationMax).toBe(200)
+    expect(metrics.elevationMin).toBe(100)
+  })
+
+  it('retains a sustained summit and its descent after median filtering', () => {
+    const heights = [100, 100, 120, 120, 120, 120, 100, 100]
+    const metrics = pointMetrics(heights.map((height, index) => point(index * LEG_METRES, height)))
+    expect(metrics.elevationGain).toBe(20)
+    expect(metrics.elevationLoss).toBe(20)
+    expect(metrics.distance).toBeCloseTo(5 * LEG_METRES + 2 * Math.sqrt(LEG_METRES ** 2 + 20 ** 2), 6)
+  })
+
+  it('preserves recorded changes at the first and last two points', () => {
+    const heights = [100, 110, 110, 110, 110, 110, 110, 100, 100]
+    const metrics = pointMetrics(heights.map((height, index) => point(index * LEG_METRES, height)))
+    expect(metrics.elevationGain).toBe(10)
+    expect(metrics.elevationLoss).toBe(10)
+    expect(metrics.distance).toBeCloseTo(6 * LEG_METRES + 2 * Math.sqrt(LEG_METRES ** 2 + 10 ** 2), 6)
+  })
+
+  it('keeps short measured runs around a gap without smoothing or climbing across it', () => {
+    const heights = [100, 110, 120, null, 400, 410, 420]
+    const metrics = pointMetrics(heights.map((height, index) => point(index * LEG_METRES, height)))
+    expect(metrics.elevationGain).toBe(40)
+    expect(metrics.elevationLoss).toBe(0)
+    expect(metrics.distance).toBeCloseTo(2 * LEG_METRES + 4 * Math.sqrt(LEG_METRES ** 2 + 10 ** 2), 6)
+    expect(metrics.elevationMin).toBe(100)
+    expect(metrics.elevationMax).toBe(420)
+  })
+
+  it('does not invent a climb from sea level after missing starting elevations', () => {
+    const metrics = pointMetrics([point(0, null), point(LEG_METRES, 100), point(2 * LEG_METRES, 130), point(3 * LEG_METRES, null)])
+    expect(metrics.elevationGain).toBe(30)
+    expect(metrics.elevationLoss).toBe(0)
+  })
+
+  it('accepts measured zero and negative elevations as real heights', () => {
+    const metrics = pointMetrics([point(0, -10), point(LEG_METRES, 0), point(2 * LEG_METRES, 20)])
+    expect(metrics.elevationGain).toBe(30)
+    expect(metrics.elevationLoss).toBe(0)
+    expect(metrics.elevationMin).toBe(-10)
+  })
+
+  it('accumulates a gradual rise past the horizontal sampling and vertical thresholds', () => {
+    const metrics = pointMetrics([0, 1, 2, 3].map(index => point(index * 2, 100 + index * 2)))
+    expect(metrics.elevationGain).toBe(6)
+    expect(metrics.elevationLoss).toBe(0)
   })
 })
 
@@ -136,22 +194,14 @@ describe('duration and extent', () => {
   })
 })
 
-describe('the ported arithmetic against wanderer’s original', () => {
-  it('reports the same numbers the model-object accumulator does', () => {
-    // `metrics.ts` exists because the model objects are gone; if the two ever
-    // disagree, the GPX path and the KML path have silently diverged.
-    const points = [
-      point(0, 100), point(1.9259526243125623, 100), point(3.8519052486251246, 104),
-      point(LEG_METRES, 120), point(LEG_METRES + 1.9259526243125623, 118), point(2 * LEG_METRES, 90),
-      point(3 * LEG_METRES, 96), point(3 * LEG_METRES + 1.9259526243125623, 130),
-    ]
-    const mine = pointMetrics(points)
-    const theirs = nativeTotals(points)
-    expect(mine.distance).toBeCloseTo(theirs.totalDistance, 6)
-    expect(mine.elevationGain).toBeCloseTo(theirs.totalElevationGainSmoothed, 6)
-    expect(mine.elevationLoss).toBeCloseTo(theirs.totalElevationLossSmoothed, 6)
-    // And both actually banked something, so the equality above is not 0 === 0.
-    expect(theirs.totalElevationGainSmoothed).toBeGreaterThan(0)
-    expect(theirs.totalElevationLossSmoothed).toBeGreaterThan(0)
+describe('physical consistency', () => {
+  it('preserves a steady uphill profile without mutating its recorded points', () => {
+    const points = Object.freeze(Array.from({length: 9}, (_, index) =>
+      Object.freeze(point(index * LEG_METRES, 100 + index * 10)))) as readonly TrackPoint[]
+    const metrics = pointMetrics(points)
+    expect(metrics.elevationGain).toBe(80)
+    expect(metrics.elevationLoss).toBe(0)
+    expect(metrics.distance).toBeCloseTo(8 * Math.sqrt(LEG_METRES ** 2 + 10 ** 2), 6)
+    expect(points.map(point => point[2])).toEqual([100, 110, 120, 130, 140, 150, 160, 170, 180])
   })
 })

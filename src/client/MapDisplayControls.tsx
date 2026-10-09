@@ -1,0 +1,98 @@
+import { useEffect, useId, useMemo, useRef, useState } from 'react'
+import type { TrackPlacemark } from '../protocol.ts'
+import { ALL_PLACEMARK_TYPES, isAllPlacemarkTypes, placemarkTypeOptions, placemarkTypeValues, type PlacemarkTypeFilter } from '../track/placemark-filter.ts'
+import { useMapSettings } from './map-settings.tsx'
+
+export interface MapDisplayControlsProps {
+  placemarks: readonly TrackPlacemark[]
+  typeFilter: PlacemarkTypeFilter
+  onTypeFilter?: (next: PlacemarkTypeFilter) => void
+  disabled?: boolean
+  sandbox?: boolean
+}
+
+export function MapDisplayControls({placemarks, typeFilter, onTypeFilter, disabled = false}: MapDisplayControlsProps) {
+  const {settings, updateSettings} = useMapSettings()
+  const [open, setOpen] = useState(false)
+  const tools = useRef<HTMLDivElement>(null)
+  const trigger = useRef<HTMLButtonElement>(null)
+  const panelId = useId()
+  const allTypes = useRef<HTMLInputElement>(null)
+  const options = useMemo(() => placemarkTypeOptions(placemarks), [placemarks])
+  const categories = options.filter(option => option.value !== ALL_PLACEMARK_TYPES)
+  const selected = new Set(placemarkTypeValues(typeFilter))
+  const all = isAllPlacemarkTypes(typeFilter)
+  const selectedCount = all ? categories.length : categories.filter(option => selected.has(option.value)).length
+  const allChecked = all || (categories.length > 0 && selectedCount === categories.length)
+  useEffect(() => {
+    if (allTypes.current) allTypes.current.indeterminate = !allChecked && selectedCount > 0
+  }, [open, allChecked, selectedCount])
+  const toggleType = (value: string, checked: boolean) => {
+    if (disabled || !onTypeFilter) return
+    if (value === ALL_PLACEMARK_TYPES) {onTypeFilter(checked ? ALL_PLACEMARK_TYPES : []); return}
+    const next = new Set(all ? categories.map(option => option.value) : placemarkTypeValues(typeFilter))
+    if (checked) next.add(value); else next.delete(value)
+    const values = categories.filter(option => next.has(option.value)).map(option => option.value)
+    onTypeFilter(values.length > 0 && values.length === categories.length ? ALL_PLACEMARK_TYPES : values)
+  }
+  const close = () => {setOpen(false); trigger.current?.focus({preventScroll: true})}
+  useEffect(() => {
+    if (!open) return
+    const outside = (event: Event) => {
+      if (event.target instanceof Node && !tools.current?.contains(event.target)) setOpen(false)
+    }
+    document.addEventListener('pointerdown', outside)
+    document.addEventListener('focusin', outside)
+    return () => {
+      document.removeEventListener('pointerdown', outside)
+      document.removeEventListener('focusin', outside)
+    }
+  }, [open])
+  return <div ref={tools} className="trk-map-display" onKeyDown={event => {
+    if (event.key === 'Escape' && open) {event.preventDefault(); event.stopPropagation(); close()}
+  }}>
+    <button ref={trigger} type="button" data-map-display-trigger className="trk-map-display-trigger"
+      aria-label="标记点与路线" title="标记点与路线" aria-expanded={open} aria-controls={panelId}
+      onClick={() => setOpen(value => !value)}>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <path d="M8.5 21s-5.7-6.6-5.7-11.3a5.7 5.7 0 0 1 11.4 0C14.2 14.4 8.5 21 8.5 21Z"/>
+        <circle cx="8.5" cy="9.5" r="2"/>
+        <path d="M15.5 4.5H22L19.6 8v3.6l-1.7 1V8l-2.4-3.5Z"/>
+      </svg>
+      <span className="trk-map-control-label">标记点与路线</span>
+    </button>
+    {open && <section id={panelId} aria-label="标记点与路线设置" className="trk-map-display-panel">
+      <div className="trk-map-display-heading"><strong>标记点与路线</strong>
+        <button type="button" className="trk-map-display-close" aria-label="关闭标记点与路线设置" onClick={close}>关闭</button>
+      </div>
+      <div className="trk-map-display-field"><label htmlFor={`${panelId}-route`}>路线颜色</label>
+        <div className="trk-map-display-color"><input id={`${panelId}-route`} type="color" aria-label="路线颜色" value={settings.routeColor} disabled={disabled}
+          onChange={event => {if (!disabled) updateSettings({routeColor: event.target.value})}}/>
+          <output>{settings.routeColor}</output>
+        </div>
+      </div>
+      <fieldset className="trk-map-display-types"><legend>标记点类型</legend>
+        {options.map(option => <label key={option.value} className="trk-map-display-type-option">
+          <input type="checkbox" aria-label={option.label} data-placemark-type={option.value}
+            ref={option.value === ALL_PLACEMARK_TYPES ? allTypes : undefined}
+            checked={option.value === ALL_PLACEMARK_TYPES ? allChecked : all || selected.has(option.value)}
+            disabled={disabled || !onTypeFilter} onChange={event => toggleType(option.value, event.target.checked)}/>
+          <span>{option.label}（{option.count}）</span>
+        </label>)}
+      </fieldset>
+      <label className="trk-map-display-check"><input type="checkbox" aria-label="显示标记点" checked={settings.sandboxPlacemarks}
+        onChange={event => updateSettings({sandboxPlacemarks: event.target.checked})}/>显示标记点</label>
+    </section>}
+    <style>{CSS}</style>
+  </div>
+}
+
+const CSS = `
+.trk-map-display{display:contents}.trk-map-dock .trk-map-display-trigger{width:44px;height:44px;min-height:44px;padding:8px;border-top:1px solid var(--trk-border);border-top-left-radius:0;border-top-right-radius:0}.trk-map-display-trigger svg{width:22px;height:22px}.trk-map-display-trigger:focus-visible{outline:2px solid var(--trk-focus);outline-offset:2px}
+.trk-map-display-panel{position:absolute;right:54px;top:0;width:min(280px,calc(100% - 54px));max-width:calc(100% - 54px);max-height:100%;overflow:auto;box-sizing:border-box;padding:12px;pointer-events:auto;z-index:6;background:var(--trk-overlay);color:var(--trk-overlay-text);border:1px solid var(--trk-border);border-radius:var(--trk-radius-md);box-shadow:0 6px 24px var(--trk-shadow)}
+.trk-map-display-heading{display:flex;align-items:center;justify-content:space-between;gap:8px}.trk-map-display-heading strong{font-size:14px}.trk-map-display .trk-map-display-panel button{display:inline-flex;align-items:center;justify-content:center;width:auto;height:auto;min-width:44px;min-height:44px;padding:8px 12px;border:1px solid var(--trk-border);border-radius:var(--trk-radius-sm);background:var(--trk-hover);color:var(--trk-overlay-text);font:inherit;cursor:pointer}
+.trk-map-display-field{display:block;margin:12px 0;font-size:14px}.trk-map-display-field>span,.trk-map-display-field>label{display:block;margin-bottom:6px}.trk-map-display-color{display:flex;align-items:center;gap:10px}.trk-map-display-color input{width:44px;height:44px;min-height:44px;box-sizing:border-box;padding:3px;border:1px solid var(--trk-border);border-radius:var(--trk-radius-sm);background:var(--trk-hover);cursor:pointer}.trk-map-display-color output{font:13px/1.5 ui-monospace,monospace;overflow-wrap:anywhere}.trk-map-display-types{margin:12px 0;padding:0;border:0;min-width:0;max-height:180px;overflow:auto;font-size:14px}.trk-map-display-types legend{padding:0 0 6px}.trk-map-display-type-option{display:flex;align-items:center;gap:8px;min-height:44px;padding:2px 0;box-sizing:border-box;cursor:pointer}.trk-map-display-type-option input{width:18px;height:18px;margin:0;flex-shrink:0;accent-color:var(--trk-accent)}.trk-map-display-type-option span{overflow-wrap:anywhere}.trk-map-display-type-option:has(input:disabled){cursor:default}.trk-map-display-check{display:flex;align-items:center;gap:8px;min-height:44px;font-size:14px;cursor:pointer}.trk-map-display-check input{width:18px;height:18px;margin:0;accent-color:var(--trk-accent)}
+.trk-map-display-panel input:focus-visible,.trk-map-display-panel button:focus-visible{outline:2px solid var(--trk-focus);outline-offset:2px}.trk-map-display-panel input:disabled{opacity:.5;cursor:default}
+@container(max-width:500px){.trk-map-display-panel{top:calc(var(--trk-map-toolbar-bottom,72px) - 10px);max-height:calc(100% - var(--trk-map-toolbar-bottom,72px) + 10px)}}
+@media(forced-colors:active){.trk-map-display-panel{background:Canvas;color:CanvasText;border-color:ButtonText}}
+`

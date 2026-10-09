@@ -1,18 +1,11 @@
 /**
  * Statistics over a flat point list.
  *
- * Ported from wanderer's `GpxMetricsComputation` (AGPL-3.0 — see
- * `src/track/LICENSE`), and deliberately kept numerically identical to the copy
- * in `model/gpx-metrics-computation.ts` so a GPX parsed through the native model
- * and a KML parsed through the vendor reader report the same numbers for the
- * same shape:
- *
- *  - distance is the *raw* sum of every consecutive haversine leg;
- *  - elevation gain / loss only count while the raw accumulator is being fed;
- *  - and the smoothed accumulator — which is what `getTotals()` actually reports
- *    — only advances one anchor every `thresholdXY` metres, and only banks the
- *    change once it exceeds `thresholdZ` metres. That is what keeps GPS noise on
- *    a flat road from reporting hundreds of metres of climb.
+ * The climb thresholds originate in wanderer's `GpxMetricsComputation`
+ * (AGPL-3.0 — see `src/track/LICENSE`). All import formats share this corrected
+ * calculation: a five-sample elevation median removes isolated sensor noise,
+ * route length includes the resulting vertical travel, and missing elevations
+ * break the climb accumulator rather than being mistaken for sea level.
  */
 import { haversineDistance } from './model/utils.ts'
 import type { TrackPoint } from '../protocol.ts'
@@ -23,7 +16,7 @@ export const THRESHOLD_XY_M = 5
 export const THRESHOLD_Z_M = 5
 
 export interface PointMetrics {
-  /** Raw summed distance, in metres. */
+  /** Summed slope distance in metres; legs without heights use horizontal distance. */
   distance: number
   elevationGain: number
   elevationLoss: number
@@ -34,62 +27,73 @@ export interface PointMetrics {
   bbox: [number, number, number, number] | null
 }
 
-/** The accumulation half of `GpxMetricsComputation`, over `TrackPoint` tuples. */
+/**
+ * Use only complete windows of five measured heights. Endpoints and short
+ * measured runs stay intact, and a missing height never gets interpolated.
+ */
+function filteredElevations(points: readonly TrackPoint[]): (number | null)[] {
+  const elevations = points.map(point => Number.isFinite(point[2]) ? point[2] : null)
+  return elevations.map((elevation, index) => {
+    if (index < 2 || index >= elevations.length - 2 || elevation === null) return elevation
+    const window = elevations.slice(index - 2, index + 3)
+    if (window.some(value => value === null)) return elevation
+    return (window as number[]).sort((a, b) => a - b)[2]
+  })
+}
+
+/** Horizontal sampling is preserved; only the elevation profile is filtered. */
 class MetricsAccumulator {
   private lastPoint: TrackPoint | null = null
+  private lastElevation: number | null = null
   private lastFilteredPoint: TrackPoint | null = null
-  private lastZ = 0
-  private lastFilteredZ = 0
+  private lastFilteredZ: number | null = null
   totalDistance = 0
-  totalElevationGain = 0
-  totalElevationLoss = 0
   totalElevationGainSmoothed = 0
   totalElevationLossSmoothed = 0
 
   constructor(private readonly thresholdXY_m: number, private readonly thresholdZ_m: number) {}
 
-  add(point: TrackPoint) {
-    const [lon, lat, elevation] = point
-    const value = elevation ?? 0
+  add(point: TrackPoint, elevation: number | null) {
+    const [lon, lat] = point
+    if (this.lastPoint) {
+      const horizontal = haversineDistance(this.lastPoint[1], this.lastPoint[0], lat, lon)
+      this.totalDistance += elevation !== null && this.lastElevation !== null
+        ? Math.hypot(horizontal, elevation - this.lastElevation)
+        : horizontal
+    }
+    this.lastPoint = point
+    this.lastElevation = elevation
 
-    if (!this.lastPoint || !this.lastFilteredPoint) {
-      // Both anchors start on the first point, elevation included.
-      this.lastPoint = point
+    if (elevation === null) {
+      this.lastFilteredPoint = null
+      this.lastFilteredZ = null
+      return
+    }
+    if (!this.lastFilteredPoint || this.lastFilteredZ === null) {
       this.lastFilteredPoint = point
-      this.lastFilteredZ = value
-      this.lastZ = value
+      this.lastFilteredZ = elevation
       return
     }
 
-    const distance = haversineDistance(this.lastPoint[1], this.lastPoint[0], lat, lon)
     const smoothedDistance = haversineDistance(this.lastFilteredPoint[1], this.lastFilteredPoint[0], lat, lon)
-
-    this.totalDistance += distance
-    this.lastPoint = point
-
-    const elevationDiff = value - this.lastZ
-    this.lastZ = value
-    if (elevationDiff > 0) this.totalElevationGain += elevationDiff
-    if (elevationDiff < 0) this.totalElevationLoss -= elevationDiff
-
     if (smoothedDistance < this.thresholdXY_m) return
     this.lastFilteredPoint = point
 
-    const smoothedDiff = value - this.lastFilteredZ
+    const smoothedDiff = elevation - this.lastFilteredZ
     if (Math.abs(smoothedDiff) < this.thresholdZ_m) return
-    this.lastFilteredZ = value
+    this.lastFilteredZ = elevation
     if (smoothedDiff > 0) this.totalElevationGainSmoothed += smoothedDiff
     else this.totalElevationLossSmoothed -= smoothedDiff
   }
 }
 
 /**
- * What `GPX.getTotals()` reports: gain and loss come from the *smoothed*
- * accumulator while the distance is the raw one. That asymmetry is upstream's,
- * not an oversight, and matching it keeps our numbers comparable to theirs.
+ * Gain, loss and slope length use the same filtered heights. Extrema use the
+ * original measurements, and duration is the range of valid point timestamps.
  */
 export function pointMetrics(points: readonly TrackPoint[]): PointMetrics {
   const accumulator = new MetricsAccumulator(THRESHOLD_XY_M, THRESHOLD_Z_M)
+  const elevations = filteredElevations(points)
 
   let minLat = Number.POSITIVE_INFINITY
   let maxLat = Number.NEGATIVE_INFINITY
@@ -100,19 +104,20 @@ export function pointMetrics(points: readonly TrackPoint[]): PointMetrics {
   let startedAt: number | null = null
   let endedAt: number | null = null
 
-  for (const point of points) {
+  for (let index = 0; index < points.length; index++) {
+    const point = points[index]
     const [lon, lat, elevation, time] = point
-    accumulator.add(point)
+    accumulator.add(point, elevations[index])
 
     if (lat < minLat) minLat = lat
     if (lat > maxLat) maxLat = lat
     if (lon < minLon) minLon = lon
     if (lon > maxLon) maxLon = lon
-    if (elevation !== null) {
+    if (elevation !== null && Number.isFinite(elevation)) {
       if (elevationMax === null || elevation > elevationMax) elevationMax = elevation
       if (elevationMin === null || elevation < elevationMin) elevationMin = elevation
     }
-    if (time !== null) {
+    if (time !== null && Number.isFinite(time)) {
       if (startedAt === null || time < startedAt) startedAt = time
       if (endedAt === null || time > endedAt) endedAt = time
     }

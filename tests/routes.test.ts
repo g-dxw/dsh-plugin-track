@@ -10,7 +10,7 @@
 import { Context } from '@deepseek-ai/cordis'
 import WebServer from '@deepseek-ai/dsh-host-webserver'
 import { afterEach, describe, expect, it } from 'vitest'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { IncomingMessage } from 'node:http'
@@ -74,7 +74,7 @@ describe('the HTTP surface', () => {
     const ctx = new Context()
     try {
       await ctx.plugin(WebServer, {host: '127.0.0.1', port: 0})
-      await ctx.plugin({...plugin, inject: ['webServer']})
+      await ctx.plugin(plugin)
       const base = `http://127.0.0.1:${String(ctx.webServer.port)}${API}`
       const send = (action: string, body?: unknown, method?: string) => fetch(`${base}/${action}`, {
         method: method ?? (body === undefined ? 'GET' : 'POST'),
@@ -84,13 +84,71 @@ describe('the HTTP surface', () => {
 
       // The first run of the plugin has no store at all, and an empty list is not
       // an error — the panel must be able to draw itself before any import.
-      expect(await (await send('tracks')).json()).toEqual([])
+      const initial = await send('tracks')
+      expect(initial.status).toBe(200)
+      expect(initial.headers.get('content-type')).toContain('application/json')
+      expect(await initial.json()).toEqual([])
+      // Agent opens before import and uses one workspace/session for the library.
+      const emptyAgent = await send('agent-workspace', {})
+      expect(emptyAgent.status).toBe(200)
+      const agentWorkspace = await emptyAgent.json()
+      expect(agentWorkspace).toEqual({path: join(home, 'track-agent', '轨迹'), sessionId: null})
+      const emptyContext = await send('agent-context', {page: 'library'})
+      expect(await emptyContext.json()).toMatchObject({version: 2, library: {trackCount: 0}, current: {page: 'library', trackId: null}})
+      expect((await send('agent-session', {sessionId: 'library-session'})).status).toBe(200)
+      expect(await (await send('agent-workspace', {})).json()).toEqual({...agentWorkspace, sessionId: 'library-session'})
+      expect((await send('agent-context', {page: '__proto__'})).status).toBe(400)
+      expect((await send('agent-context', {page: 'overview', trackId: '../escape'})).status).toBe(400)
+      expect((await send('agent-session', {sessionId: '../escape'})).status).toBe(400)
+      expect((await send('agent-workspace', {trackId: '../escape'})).status).toBe(400)
+      expect((await send('agent-session', {sessionId: 'valid-session', trackId: '../escape'})).status).toBe(400)
+      expect((await send('agent-workspace', {trackId: 'missing'})).status).toBe(404)
+      expect((await send('agent-session', {sessionId: 'valid-session', trackId: 'missing'})).status).toBe(404)
+      expect((await send('agent-context', {page: 'overview', trackId: 'missing'})).status).toBe(404)
+      expect((await send('agent-workspace', [])).status).toBe(400)
+      expect((await send('agent-session', null)).status).toBe(400)
+      expect(existsSync(join(home, 'track-agent', 'tracks'))).toBe(false)
+      expect((await fetch(`${base}/agent-workspace`, {method: 'POST', body: '{}'})).status).toBe(403)
+      // An optional account service must not prevent the ordinary track routes
+      // from mounting, or manufacture a script while no AI is connected.
+      for (const action of ['text-models', 'analyze', 'animation-script', 'video-script']) {
+        const unavailable = await send(action, action === 'text-models' ? undefined : {})
+        expect(unavailable.status).toBe(503)
+        expect(await unavailable.json()).toMatchObject({error: expect.stringContaining('账号服务')})
+      }
 
       const created = await send('tracks', BODY)
       expect(created.status).toBe(201)
       const written = await created.json()
       expect(written).toMatchObject({name: '晨跑', filename: 'morning.gpx', format: 'gpx', points: 3})
       expect(written.metrics.distance).toBe(1200)
+      const selectedContext = await send('agent-context', {page: 'overview', trackId: written.id})
+      expect(await selectedContext.json()).toMatchObject({library: {trackCount: 1}, current: {page: 'overview', trackId: written.id, track: {name: '晨跑'}}})
+      const routeAWorkspace = await (await send('agent-workspace', {trackId: written.id})).json()
+      expect(routeAWorkspace).toEqual({path: join(home, 'track-agent', 'tracks', written.id), sessionId: null})
+      expect((await send('agent-session', {sessionId: 'route-a-session', trackId: written.id})).status).toBe(200)
+      const routeB = await (await send('tracks', {...BODY, name: '路线 B'})).json()
+      const routeBWorkspace = await (await send('agent-workspace', {trackId: routeB.id})).json()
+      expect(routeBWorkspace).toEqual({path: join(home, 'track-agent', 'tracks', routeB.id), sessionId: null})
+      expect((await send('agent-session', {sessionId: 'route-b-session', trackId: routeB.id})).status).toBe(200)
+      expect(await (await send('agent-workspace', {trackId: written.id})).json()).toEqual({...routeAWorkspace, sessionId: 'route-a-session'})
+      expect(await (await send('agent-workspace', {trackId: routeB.id})).json()).toEqual({...routeBWorkspace, sessionId: 'route-b-session'})
+      expect(await (await send('agent-workspace', {})).json()).toEqual({...agentWorkspace, sessionId: 'library-session'})
+      const routeAContext = readFileSync(join(routeAWorkspace.path, 'track-context.json'), 'utf8')
+      for (const page of ['overview', 'animation', 'edit']) {
+        expect(await (await send('agent-context', {page, trackId: routeB.id})).json()).toMatchObject({current: {page, trackId: routeB.id}})
+      }
+      expect(readFileSync(join(routeAWorkspace.path, 'track-context.json'), 'utf8')).toBe(routeAContext)
+      for (const page of ['library', 'new']) {
+        expect(await (await send('agent-context', {page, trackId: written.id})).json()).toMatchObject({current: {page, trackId: null, track: null}})
+        expect(JSON.parse(readFileSync(join(agentWorkspace.path, 'track-context.json'), 'utf8')).current.trackId).toBeNull()
+      }
+      expect(readFileSync(join(routeAWorkspace.path, 'track-context.json'), 'utf8')).toBe(routeAContext)
+      expect((await send(`track?id=${routeB.id}`, undefined, 'DELETE')).status).toBe(200)
+      expect((await send('agent-workspace', {trackId: routeB.id})).status).toBe(404)
+      expect(existsSync(routeBWorkspace.path)).toBe(true)
+      const listContext = await send('agent-context', {page: 'library'})
+      expect(await listContext.json()).toMatchObject({current: {page: 'library', trackId: null, track: null}})
 
       // The list carries metadata only: a track with 500k points must not turn the
       // panel's index into a payload the size of the track itself.
@@ -112,6 +170,13 @@ describe('the HTTP surface', () => {
 
       expect((await send(`track?id=${written.id}`, undefined, 'DELETE')).status).toBe(200)
       expect(await (await send('tracks')).json()).toEqual([])
+      // An optional account service must not prevent the ordinary track routes
+      // from mounting, or manufacture a script while no AI is connected.
+      for (const action of ['text-models', 'analyze', 'animation-script', 'video-script']) {
+        const unavailable = await send(action, action === 'text-models' ? undefined : {})
+        expect(unavailable.status).toBe(503)
+        expect(await unavailable.json()).toMatchObject({error: expect.stringContaining('账号服务')})
+      }
       // A second delete is a 404, not a crash — the panel may ask twice.
       expect((await send(`track?id=${written.id}`, undefined, 'DELETE')).status).toBe(404)
       expect((await send('track?id=missing')).status).toBe(404)
@@ -148,7 +213,7 @@ describe('the HTTP surface', () => {
     const ctx = new Context()
     try {
       await ctx.plugin(WebServer, {host: '127.0.0.1', port: 0})
-      await ctx.plugin({...plugin, inject: ['webServer']})
+      await ctx.plugin(plugin)
       const base = `http://127.0.0.1:${String(ctx.webServer.port)}${API}`
       const written = await (await fetch(`${base}/tracks`, {
         method: 'POST',

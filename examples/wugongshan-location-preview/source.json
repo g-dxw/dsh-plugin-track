@@ -1,0 +1,61 @@
+{
+  "schema": "track-camera-demo-source/v1",
+  "trackId": "wugongshan-location-demo",
+  "trackRouteIds": [
+    "xlav0be1",
+    "pbdi6hwy"
+  ],
+  "trackRunLengths": [
+    1121,
+    1070
+  ],
+  "trailPlacemarkNodeIds": [
+    "lpl9c5bh",
+    "7b0nhr7b",
+    "6dlfq3le",
+    "23j7ec3u"
+  ],
+  "metrics": {
+    "distance": 23110,
+    "elevationGain": 2286.49,
+    "elevationLoss": 2227.35,
+    "elevationMax": 1912.35,
+    "elevationMin": 534.59
+  },
+  "sourceNotes": [
+    "Route coordinates copied unchanged from the two already reviewed GeoMotion route layers.",
+    "Only displayed layers and the camera are included. Hidden source markers, photos, record times and the original KML are omitted.",
+    "The demo reconstructs a minimal source track from its authored geometry; this is not the original recording file."
+  ],
+  "map": {
+    "imagery": "Esri World Imagery",
+    "terrain": "Mapterhorn",
+    "onlineTilesRequired": true
+  },
+  "boundary": {
+    "geometry": "data/hunan-jiangxi.geojson",
+    "metadata": "data/boundary-source.json",
+    "attribution": "geoBoundaries / www.geoboundaries.org",
+    "license": "CC BY 4.0"
+  },
+  "driving": {
+    "geometry": "data/pingxiang-station-to-longshan.road.geojson",
+    "metadata": "data/driving-source.json",
+    "distanceMetres": 51327.1,
+    "durationSeconds": 3124.3,
+    "traffic": "No real-time traffic",
+    "attribution": "OpenStreetMap contributors / OSRM"
+  },
+  "preview": {
+    "sceneIds": [
+      "SC02",
+      "SC03",
+      "SC04A"
+    ],
+    "width": 1280,
+    "height": 720,
+    "fps": 30,
+    "duration": 72,
+    "fullFilmApproved": false
+  }
+}
