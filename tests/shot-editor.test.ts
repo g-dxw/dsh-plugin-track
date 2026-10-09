@@ -3,6 +3,8 @@ import type { TrackPoint } from '../src/protocol.ts'
 import type { SandboxCameraState } from '../src/track/sandbox/types.ts'
 import { createShotEditorPlan, evaluateShotEditorFrame, parseShotEditorPlan, shotEditorTrackFingerprint,
   type ShotEditorPlan } from '../src/track/shot-editor.ts'
+import {parseShotEditorProject, resizeShotEditorDuration, retimeShotEditorKey} from '../src/track/shot-editor-workspace.ts'
+import {DEFAULT_MAP_SETTINGS} from '../src/track/map-settings.ts'
 
 const camera: SandboxCameraState = {position: [100, 100, 100], target: [0, 0, 0], fov: 40}
 function plan(): ShotEditorPlan {
@@ -14,6 +16,73 @@ function freeze(value: unknown): void {
     Object.freeze(value)
   }
 }
+
+describe('shared workbench adapters preserve the native shot document', () => {
+  it('retimes only its native camera lane while preserving ids, vectors, easing and independent route keys', () => {
+    const source = plan(), before = structuredClone(source)
+    source.routeKeyframes[0].id = source.cameraKeyframes[1].id
+    before.routeKeyframes[0].id = source.cameraKeyframes[1].id
+    freeze(source)
+    const moved = retimeShotEditorKey(source, 'camera', 'camera-end', 13)
+    expect(moved.cameraKeyframes[1]).toEqual({...before.cameraKeyframes[1], time: 13})
+    expect(moved.cameraKeyframes[0]).toEqual(before.cameraKeyframes[0])
+    expect(moved.routeKeyframes).toEqual(before.routeKeyframes)
+    expect(moved.caption).toEqual(before.caption)
+    expect(source).toEqual(before)
+    expect(parseShotEditorPlan(moved, 'track-1')).toEqual(moved)
+  })
+
+  it('rejects collisions within a lane without changing either track and accepts a time used in another lane', () => {
+    const source = plan(), before = structuredClone(source)
+    expect(() => retimeShotEditorKey(source, 'route', 'route-hold', 13)).toThrow('原关键帧保留')
+    expect(source).toEqual(before)
+    const moved = retimeShotEditorKey(source, 'camera', 'camera-end', 13)
+    expect(moved.cameraKeyframes[1].time).toBe(13)
+    const route = retimeShotEditorKey(source, 'route', 'route-hold', 10)
+    expect(route.routeKeyframes.find(key => key.id === 'route-hold')).toEqual({id: 'route-hold', time: 10, progress: 0})
+    expect(route.cameraKeyframes).toEqual(source.cameraKeyframes)
+    expect(() => retimeShotEditorKey(source, 'camera', 'camera-end', NaN)).toThrow()
+    expect(() => retimeShotEditorKey(source, 'camera', 'camera-end', 21)).toThrow()
+  })
+
+  it('resizes close imported key times without rounding them together or changing camera data', () => {
+    const source = plan()
+    source.cameraKeyframes[0].time = .001
+    source.cameraKeyframes[1].time = .0014
+    source.labels = [{id: 'named-place', sourceId: 'source-place', name: '旧地名', coordinates: [114.2, 27.5], from: 2, to: 9}]
+    source.caption = {text: '保留字幕', from: 4, to: 14}
+    const before = structuredClone(source); freeze(source)
+    const resized = resizeShotEditorDuration(source, 1)
+    expect(resized.cameraKeyframes[0].time).toBeCloseTo(.001 / 20, 12)
+    expect(resized.cameraKeyframes[1].time).toBeCloseTo(.0014 / 20, 12)
+    expect(new Set(resized.cameraKeyframes.map(key => key.time)).size).toBe(2)
+    expect(resized.cameraKeyframes.map(key => key.camera)).toEqual(before.cameraKeyframes.map(key => key.camera))
+    expect(resized.routeKeyframes.map(key => [key.id, key.time, key.progress])).toEqual(before.routeKeyframes.map(key => [key.id, key.time / 20, key.progress]))
+    expect(resized.labels[0]).toEqual({...before.labels[0], from: .1, to: .45})
+    expect(resized.caption.text).toBe('保留字幕'); expect(resized.caption.from).toBeCloseTo(.2); expect(resized.caption.to).toBeCloseTo(.7)
+    expect(parseShotEditorPlan(resized, 'track-1')).toEqual(resized); expect(source).toEqual(before)
+    expect(() => resizeShotEditorDuration(source, 0)).toThrow()
+    expect(() => resizeShotEditorDuration(source, 1801)).toThrow()
+  })
+
+  it('accepts the original legacy payload and versioned workspace envelope without converting coordinates', () => {
+    const source = {schema: 'cqai-track-shot-editor@1', plan: plan(), appearance: {
+      lighting: structuredClone(DEFAULT_MAP_SETTINGS.lighting), sandboxColors: structuredClone(DEFAULT_MAP_SETTINGS.sandboxColors),
+      sandboxBackground: DEFAULT_MAP_SETTINGS.sandboxBackground,
+    }}
+    const restored = parseShotEditorProject(source, 'track-1')!
+    expect(restored).toEqual(source)
+    expect(parseShotEditorProject({...source, revision: 'saved-v1', updatedAt: '2026-10-09'}, 'track-1')).toEqual(source)
+    restored.plan.cameraKeyframes[0].camera.position[0] = 999
+    restored.appearance.lighting.ambient = 0
+    expect(source.plan.cameraKeyframes[0].camera.position[0]).toBe(100)
+    expect(source.appearance.lighting.ambient).toBe(DEFAULT_MAP_SETTINGS.lighting.ambient)
+    expect(parseShotEditorProject(source, 'another-track')).toBe(null)
+    expect(parseShotEditorProject({...source, schema: 'unknown'}, 'track-1')).toBe(null)
+    expect(parseShotEditorProject({...source, appearance: null}, 'track-1')).toBe(null)
+    expect(parseShotEditorProject({...source, appearance: {...source.appearance, sandboxBackground: 'unsupported'}}, 'track-1')).toBe(null)
+  })
+})
 
 describe('executable shot timeline', () => {
   it('starts with two detached camera frames, a separate hold/draw/hold route track and a 20 second duration', () => {

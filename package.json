@@ -17,6 +17,10 @@
   "files": [
     "lib/index.js",
     "lib/client.js",
+    "scripts/openmontage_bridge.py",
+    "scripts/openmontage_zh_cn.js",
+    "scripts/openmontage_ui.css",
+    "scripts/openmontage_ui.js",
     "cordis.patch.yml",
     "README.md",
     "PROVENANCE.md",

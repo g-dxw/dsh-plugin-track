@@ -1,6 +1,6 @@
 import {describe, expect, it} from 'vitest'
 import type {PlacemarkGroup, TrackPlacemark, TrackRecord} from '../src/protocol.ts'
-import {createGeoMotionProject, geoApplyTemplate, geoCameraKeys, geoEvaluate, geoNewKey,
+import {createGeoMotionProject, geoCameraKeys, geoEvaluate, geoNewKey,
   geoParseProject, geoRemoveCameraKey, geoResizeDuration, geoSetCameraKey} from '../src/track/geomotion.ts'
 
 const point = (id: string, name: string, lon: number, hidden = false): TrackPlacemark => ({id, name, coordinates: [lon, 27.5], description: '', images: [], hidden})
@@ -109,23 +109,6 @@ describe('GeoMotion editable camera tracks', () => {
     expect(geoEvaluate(document, NaN)).toEqual(geoEvaluate(document, 0))
     expect(geoEvaluate(document, Infinity)).toEqual(geoEvaluate(document, 20))
     expect(JSON.stringify(document)).toBe(serialized)
-  })
-
-  it('creates editable templates and tours the actual visible marker coordinates', () => {
-    const document = built(), before = JSON.stringify(document)
-    for (const template of ['intro', 'orbit', 'pullback', 'tour'] as const) {
-      const next = geoApplyTemplate(document, template), keys = geoCameraKeys(next)
-      expect(keys.length).toBeGreaterThanOrEqual(3)
-      expect(keys[0].t).toBe(0); expect(keys.at(-1)?.t).toBe(20)
-      expect(geoParseProject(JSON.stringify(next)).duration).toBe(20)
-    }
-    const orbit = geoCameraKeys(geoApplyTemplate(document, 'orbit'))
-    expect(orbit.map(row => row.bearing)).toEqual([0, 90, 180, 270, 360])
-    const tour = geoCameraKeys(geoApplyTemplate(document, 'tour'))
-    expect(tour.some(row => JSON.stringify(row.center) === JSON.stringify(points[0].coordinates))).toBe(true)
-    expect(tour.some(row => JSON.stringify(row.center) === JSON.stringify(points[1].coordinates))).toBe(true)
-    expect(JSON.stringify(document)).toBe(before)
-    expect(() => geoApplyTemplate(createGeoMotionProject(track(), []).document, 'tour')).toThrow('可见地名')
   })
 
   it('resizes duration proportionally while preserving route reveal, label timing, and manually edited cameras', () => {

@@ -2,6 +2,8 @@ import { existsSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSy
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { readTrack, trackDir } from './artifacts.ts'
+import {resolveOpenMontageShotDirectory, runOpenMontageCommandSync} from './openmontage-store.ts'
+import type {ShotProjectScope} from './track/shot-project-scope.ts'
 import { GEOMOTION_PROJECT_MAX_BYTES, GEOMOTION_PROJECT_SCHEMA, type GeoMotionProjectEnvelope, type GeoMotionProjectInput } from './track/geomotion-project-types.ts'
 
 export class GeoMotionProjectError extends Error {
@@ -92,8 +94,11 @@ function validateInput(id: string, value: unknown): GeoMotionProjectInput {
 function requiredTrack(id: string, env: NodeJS.ProcessEnv): void {
   if (!readTrack(id, env)) throw new GeoMotionProjectError('轨迹不存在', 404)
 }
-function readEnvelope(id: string, env: NodeJS.ProcessEnv): GeoMotionProjectEnvelope | null {
-  const path = join(trackDir(id, env), 'geomotion-project.json')
+function projectDirectory(id: string, env: NodeJS.ProcessEnv, scope?: ShotProjectScope): string {
+  return scope ? resolveOpenMontageShotDirectory(id, scope, env) : trackDir(id, env)
+}
+function readEnvelope(id: string, env: NodeJS.ProcessEnv, scope?: ShotProjectScope): GeoMotionProjectEnvelope | null {
+  const path = join(projectDirectory(id, env, scope), 'geomotion-project.json')
   if (!existsSync(path)) return null
   if (statSync(path).size > GEOMOTION_PROJECT_MAX_BYTES + 4096) throw new GeoMotionProjectError('已保存的镜头工程过大', 413)
   let value: unknown
@@ -102,23 +107,24 @@ function readEnvelope(id: string, env: NodeJS.ProcessEnv): GeoMotionProjectEnvel
   return {...validateInput(id, value), schema: GEOMOTION_PROJECT_SCHEMA, revision: value.revision, updatedAt: value.updatedAt}
 }
 
-export function readGeoMotionProject(id: string, env: NodeJS.ProcessEnv = process.env): GeoMotionProjectEnvelope | null {
+export function readGeoMotionProject(id: string, env: NodeJS.ProcessEnv = process.env, scope?: ShotProjectScope): GeoMotionProjectEnvelope | null {
   requiredTrack(id, env)
-  return readEnvelope(id, env)
+  return readEnvelope(id, env, scope)
 }
 
 /** Synchronous compare-and-replace prevents stale editors from silently losing authored work. */
-export function writeGeoMotionProject(id: string, value: unknown, expectedRevision: unknown, env: NodeJS.ProcessEnv = process.env): GeoMotionProjectEnvelope {
+export function writeGeoMotionProject(id: string, value: unknown, expectedRevision: unknown, env: NodeJS.ProcessEnv = process.env, scope?: ShotProjectScope): GeoMotionProjectEnvelope {
   requiredTrack(id, env)
-  const previous = readEnvelope(id, env)
+  const previous = readEnvelope(id, env, scope), directory = projectDirectory(id, env, scope)
   if (previous && expectedRevision === undefined) throw new GeoMotionProjectConflictError()
   if (!(expectedRevision === null || text(expectedRevision, 256, true))) throw new GeoMotionProjectError('缺少有效的镜头工程修订号')
   if (expectedRevision !== (previous?.revision ?? null)) throw new GeoMotionProjectConflictError()
   const project: GeoMotionProjectEnvelope = {...validateInput(id, value), schema: GEOMOTION_PROJECT_SCHEMA, revision: randomUUID(), updatedAt: new Date().toISOString()}
-  const temporary = join(trackDir(id, env), `.geomotion-project-${randomUUID()}.tmp`)
+  if (scope) return runOpenMontageCommandSync<GeoMotionProjectEnvelope>('engine-write', {trackId: id, ...scope, editor: 'map', project, expectedRevision}, env)
+  const temporary = join(directory, `.geomotion-project-${randomUUID()}.tmp`)
   try {
     writeFileSync(temporary, JSON.stringify(project), {encoding: 'utf8', flag: 'wx'})
-    renameSync(temporary, join(trackDir(id, env), 'geomotion-project.json'))
+    renameSync(temporary, join(directory, 'geomotion-project.json'))
   } catch (error) {
     if (!(error && typeof error === 'object' && 'code' in error && error.code === 'EEXIST')) {
       try {unlinkSync(temporary)} catch { /* A name collision never grants ownership of another temporary file. */ }

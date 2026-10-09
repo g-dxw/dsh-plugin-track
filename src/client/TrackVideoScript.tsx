@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { TrackPlacemark, TrackRecord } from '../protocol.ts'
 import type { BasemapId } from '../track/basemaps.ts'
 import { validateAnnotations, type TrackAnnotation } from '../track/annotations.ts'
@@ -8,31 +8,79 @@ import { generateVideoScript } from './video-script-ai.ts'
 import { useTrackPlacemarks } from './useTrackPlacemarks.ts'
 import { useTextModels } from './useTextModels.ts'
 import { MapView } from './MapView.tsx'
-import { ShotCaseLab } from './ShotCaseLab.tsx'
 import { ShotEditor } from './ShotEditor.tsx'
 import { GeoMotionEditor } from './GeoMotionEditor.tsx'
 import { VideoMaterialPrep } from './VideoMaterialPrep.tsx'
+import { VideoResourceSelections } from './VideoResourceSelections.tsx'
 import type { VideoMaterialsDocument } from '../track/video-materials.ts'
 import { api, clipboardSafeName, download } from './util.ts'
+import { useEditorNavigation, type EditorNavigationHandle } from './editor-navigation.tsx'
+import { VIDEO_WORKSPACE_CSS } from './video-workspace-css.ts'
+import {OpenMontagePlanning} from './OpenMontagePlanning.tsx'
+import type {OpenMontageEditor, OpenMontageShotScope} from '../track/openmontage.ts'
+import type {TrackAgentServicesReader} from './useTrackAgentDrawer.ts'
+import {createShotCaptureStore} from './shot-capture-store.ts'
 
-type Props = {track:TrackRecord; basemap:BasemapId; onBasemap:(id:BasemapId)=>void; onCancel:()=>void}
+type Props = {track:TrackRecord; basemap:BasemapId; onBasemap:(id:BasemapId)=>void; onCancel:()=>void; getAgentServices?:TrackAgentServicesReader; onKeepSession?:(sessionId:string,signal?:AbortSignal)=>Promise<void>}
 type History = {past:VideoScriptDraft[]; future:VideoScriptDraft[]}
 type Suggestion = {value:VideoScriptSuggestion; revision:number; fingerprint:string}
 
 /** This workspace plans editable scenes; it never starts the recorder or an AI request on entry. */
 export function TrackVideoScript(props:Props) {return <TrackVideoWorkspace key={props.track.id} {...props} />}
 function TrackVideoWorkspace(props:Props) {
-  const [mode,setMode] = useState<'cases'|'planning'|'editing'|'geomotion'|'materials'>('cases')
+  const [captureStore] = useState(createShotCaptureStore)
+  useEffect(() => () => captureStore.clear(), [captureStore])
+  const [mode,setMode] = useState<'planning'|'editing'|'materials'>('editing')
+  const [scene,setScene] = useState<'map'|'sandbox'>('map')
+  const [visited,setVisited] = useState({map:true,sandbox:false,materials:false,planning:false})
   const [preparedMaterials,setPreparedMaterials] = useState<VideoMaterialsDocument|null>(null)
-  if(mode==='materials')return <VideoMaterialPrep track={props.track} onBack={()=>setMode('cases')} onCompose={document=>{setPreparedMaterials(document);setMode('geomotion')}} />
-  if(mode==='editing')return <ShotEditor {...props} onCases={()=>setMode('cases')} />
-  if(mode==='geomotion')return <GeoMotionEditor {...props} preparedMaterials={preparedMaterials??undefined} onMaterials={()=>setMode('materials')} onCases={()=>setMode('cases')} />
-  return mode==='cases'
-    ? <ShotCaseLab {...props} onPlanning={()=>setMode('planning')} onEditing={()=>setMode('editing')} onMaterials={()=>setMode('materials')} onGeoMotion={()=>{setPreparedMaterials(null);setMode('geomotion')}} />
-    : <TrackVideoScriptPlanning {...props} onCases={()=>setMode('cases')} />
+  const [scopes,setScopes] = useState<Record<OpenMontageEditor,OpenMontageShotScope|null>>({map:null,sandbox:null})
+  const [planningRefresh,setPlanningRefresh] = useState(0)
+  const [mapNavigation,setMapNavigation] = useState<EditorNavigationHandle|null>(null)
+  const [sandboxNavigation,setSandboxNavigation] = useState<EditorNavigationHandle|null>(null)
+  const [materialNavigation,setMaterialNavigation] = useState<EditorNavigationHandle|null>(null)
+  const [scriptNavigation,setScriptNavigation] = useState<EditorNavigationHandle|null>(null)
+  const registerMap = useCallback((value:EditorNavigationHandle|null)=>setMapNavigation(value),[])
+  const registerSandbox = useCallback((value:EditorNavigationHandle|null)=>setSandboxNavigation(value),[])
+  const registerMaterials = useCallback((value:EditorNavigationHandle|null)=>setMaterialNavigation(value),[])
+  const registerScript = useCallback((value:EditorNavigationHandle|null)=>setScriptNavigation(value),[])
+  const current = mode==='materials'?materialNavigation:mode==='planning'?scriptNavigation:scene==='map'?mapNavigation:sandboxNavigation
+  function activate(next:typeof mode,kind=scene) {
+    setMode(next);setScene(kind)
+    setVisited(value=>({...value,[next==='editing'?kind:next]:true}))
+  }
+  function navigate(next:typeof mode,kind=scene) {
+    if(mode===next&&(next!=='editing'||scene===kind))return
+    const change=()=>activate(next,kind)
+    if(current)current.requestLeave(change);else change()
+  }
+  function leave() {if(current)current.requestLeave(props.onCancel);else props.onCancel()}
+  function openShot(scope:OpenMontageShotScope,editor:OpenMontageEditor) {setScopes(value=>({...value,[editor]:scope}));activate('editing',editor)}
+  function resetScope() {const change=()=>setScopes(value=>({...value,[scene]:null}));if(current)current.requestLeave(change);else change()}
+  const scope=scopes[scene]
+  const editorKey=(kind:OpenMontageEditor)=>`${props.track.id}:${scopes[kind]?.projectId||'track'}:${scopes[kind]?.shotId||'singleton'}`
+  const shotResult=()=>setPlanningRefresh(value=>value+1)
+  const tabs=[{id:'materials',name:'素材准备'},{id:'planning',name:'脚本策划'},{id:'editing',name:'镜头编辑'}] as const
+  return <section className="trk-video-workspace" aria-label="轨迹视频制作">
+    <style>{VIDEO_WORKSPACE_CSS}</style>
+    <div className="trk-video-navigation"><nav role="tablist" aria-label="视频制作内容">{tabs.map(tab=><button key={tab.id} type="button" role="tab" id={`trk-video-${tab.id}-tab`} aria-controls={`trk-video-${tab.id}-panel`} aria-selected={mode===tab.id} tabIndex={mode===tab.id?0:-1} disabled={current?.busy} onClick={()=>navigate(tab.id)} onKeyDown={event=>{
+      const index=tabs.findIndex(value=>value.id===tab.id)
+      const next=event.key==='ArrowRight'?tabs[(index+1)%tabs.length]:event.key==='ArrowLeft'?tabs[(index+tabs.length-1)%tabs.length]:event.key==='Home'?tabs[0]:event.key==='End'?tabs[tabs.length-1]:null
+      if(next){event.preventDefault();navigate(next.id);globalThis.document.getElementById(`trk-video-${next.id}-tab`)?.focus()}
+    }}>{tab.name}</button>)}</nav><button type="button" className="trk-secondary" disabled={current?.busy} onClick={leave}>返回轨迹</button></div>
+    <div role="tabpanel" id="trk-video-editing-panel" aria-labelledby="trk-video-editing-tab" hidden={mode!=='editing'}>
+      <div className="trk-video-scenes" role="group" aria-label="镜头场景"><span>场景</span><button type="button" aria-pressed={scene==='map'} disabled={current?.busy} onClick={()=>navigate('editing','map')}>地图</button><button type="button" aria-pressed={scene==='sandbox'} disabled={current?.busy} onClick={()=>navigate('editing','sandbox')}>3D 沙盘</button></div>
+      {scope&&<div className="trk-video-shot-scope" role="status">项目分镜：{scope.sceneId}<button type="button" disabled={current?.busy} onClick={()=>navigate('planning')}>返回策划看板</button><button type="button" disabled={current?.busy} onClick={resetScope}>打开独立轨迹镜头</button></div>}
+      <div hidden={scene!=='map'}>{visited.map&&<GeoMotionEditor {...props} key={editorKey('map')} scope={scopes.map??undefined} captureStore={captureStore} onShotResult={shotResult} onCancel={scopes.map?()=>activate('planning'):props.onCancel} active={mode==='editing'&&scene==='map'} onRegister={registerMap} preparedMaterials={!scopes.map?preparedMaterials??undefined:undefined} onMaterials={()=>activate('materials')} />}</div>
+      <div hidden={scene!=='sandbox'}>{visited.sandbox&&<ShotEditor {...props} key={editorKey('sandbox')} scope={scopes.sandbox??undefined} captureStore={captureStore} onShotResult={shotResult} onCancel={scopes.sandbox?()=>activate('planning'):props.onCancel} active={mode==='editing'&&scene==='sandbox'} onRegister={registerSandbox} />}</div>
+    </div>
+    <div role="tabpanel" id="trk-video-materials-panel" aria-labelledby="trk-video-materials-tab" hidden={mode!=='materials'}>{visited.materials&&<><VideoResourceSelections trackId={props.track.id} trackName={props.track.name}/><VideoMaterialPrep track={props.track} active={mode==='materials'} onRegister={registerMaterials} onBack={()=>activate('editing')} onCompose={document=>{setPreparedMaterials(document);setScopes(value=>({...value,map:null}));activate('editing','map')}} /></>}</div>
+    <div role="tabpanel" id="trk-video-planning-panel" aria-labelledby="trk-video-planning-tab" hidden={mode!=='planning'}>{visited.planning&&<OpenMontagePlanning track={props.track} active={mode==='planning'} getAgentServices={props.getAgentServices} onKeepSession={props.onKeepSession} refreshKey={planningRefresh} onRegister={registerScript} onOpenShot={openShot} />}</div>
+  </section>
 }
-export function TrackVideoScriptPlanning(props:Props & {onCases?:()=>void}) {return <VideoScriptWorkspace key={props.track.id} {...props} />}
-function VideoScriptWorkspace({track,basemap,onBasemap,onCancel,onCases}:Props & {onCases?:()=>void}) {
+type PlanningProps = Props & {onBack?:()=>void;active?:boolean;onRegister?:(value:EditorNavigationHandle|null)=>void}
+export function TrackVideoScriptPlanning(props:PlanningProps) {return <VideoScriptWorkspace key={props.track.id} {...props} />}
+function VideoScriptWorkspace({track,basemap,onBasemap,onCancel,onBack,active=true,onRegister}:PlanningProps) {
   const placemarks = useTrackPlacemarks(track)
   const {catalog,model,setModel,reload} = useTextModels()
   const [annotations,setAnnotations] = useState<TrackAnnotation[]>([])
@@ -46,6 +94,7 @@ function VideoScriptWorkspace({track,basemap,onBasemap,onCancel,onCases}:Props &
   const [saveState,setSaveState] = useState('尚未建立脚本草稿'), [cacheNotice,setCacheNotice] = useState('')
   const [busy,setBusy] = useState(false), [aiError,setAIError] = useState(''), [suggestion,setSuggestion] = useState<Suggestion|null>(null)
   const [editNotice,setEditNotice] = useState('')
+  const [cachedBaseline,setCachedBaseline] = useState('')
   const restored = useRef(false), alive = useRef(true), pending = useRef<AbortController|null>(null), requestId = useRef(0), revision = useRef(0)
   const latestDraft = useRef(draft); latestDraft.current = draft
   const latestAnalysis = useRef(analysis); latestAnalysis.current = analysis
@@ -98,9 +147,14 @@ function VideoScriptWorkspace({track,basemap,onBasemap,onCancel,onCases}:Props &
   useEffect(() => {
     if(!draft||!analysis||!draftCurrent)return
     if(validationError){setSaveState(`修改尚未保存：${validationError}`);return}
-    try {localStorage.setItem(key,JSON.stringify({version:1,draft:validateVideoScriptDraft(draft,analysis)}));setSaveState('已自动保存在此浏览器')}
+    try {localStorage.setItem(key,JSON.stringify({version:1,draft:validateVideoScriptDraft(draft,analysis)}));setCachedBaseline(JSON.stringify(draft));setSaveState('已自动保存在此浏览器')}
     catch {setSaveState('浏览器存储不可用，当前修改仅在页面中保留；请导出备份。')}
   }, [draft,analysis,draftCurrent,validationError,key])
+  const navigation = useEditorNavigation({active,dirty:!!draft&&JSON.stringify(draft)!==cachedBaseline,busy,save:async()=>{
+    if(!draft||!analysis||!draftCurrent||validationError)return false
+    try{localStorage.setItem(key,JSON.stringify({version:1,draft:validateVideoScriptDraft(draft,analysis)}));setCachedBaseline(JSON.stringify(draft));setSaveState('已保存在此浏览器');return true}
+    catch{setSaveState('浏览器存储不可用，请导出备份。');return false}
+  },discard:()=>{const previous=cachedBaseline?JSON.parse(cachedBaseline) as VideoScriptDraft:null;latestDraft.current=previous;setDraft(previous);setNotes(previous?.notes||'');setActiveShotId(previous?.shots[0]?.id||null);setSelectedIds(previous?.shots.map(shot=>shot.candidateId)||[]);setStep(previous?'script':'information');setHistory({past:[],future:[]})},onRegister})
   const activeShot = draft?.shots.find(shot=>shot.id===activeShotId) || draft?.shots[0]
   const activeCandidate = analysis?.candidates.find(candidate=>candidate.id===(step==='script'?activeShot?.candidateId:locatedCandidate))
   const previewPoint = useMemo<TrackPlacemark|null>(() => {
@@ -190,9 +244,11 @@ function VideoScriptWorkspace({track,basemap,onBasemap,onCancel,onCases}:Props &
   }
 
   return <section className="trk-video-script" aria-label="轨迹视频脚本制作台"><style>{VIDEO_SCRIPT_CSS}</style>
-    <header className="trk-vs-header"><div><h2>轨迹视频脚本</h2><p className="trk-muted">先看轨迹能讲什么，再选择镜头、编辑脚本并逐镜确认。</p></div><div className="trk-vs-actions">{onCases&&<button className="trk-secondary" onClick={onCases}>返回镜头案例</button>}<button className="trk-secondary" onClick={onCancel}>返回轨迹</button></div></header>
+    {navigation.dialog}
+    <header className="trk-vs-header"><div><h2>轨迹视频脚本</h2><p className="trk-muted">先看轨迹能讲什么，再选择镜头、编辑脚本并逐镜确认。</p></div><div className="trk-vs-actions">{onBack&&<button className="trk-secondary" disabled={busy} onClick={()=>navigation.requestLeave(onBack)}>返回镜头编辑</button>}<button className="trk-secondary" disabled={busy} onClick={()=>navigation.requestLeave(onCancel)}>返回轨迹</button></div></header>
+    <VideoResourceSelections trackId={track.id} trackName={track.name}/>
     <nav className="trk-vs-steps" aria-label="脚本制作步骤"><button className={step==='information'?'trk-primary':'trk-secondary'} aria-current={step==='information'?'step':undefined} onClick={()=>{setStep('information');setReplaceRequested(false)}}>1 · 分析信息与选题</button><button className={step==='script'?'trk-primary':'trk-secondary'} aria-current={step==='script'?'step':undefined} disabled={!draft} onClick={()=>setStep('script')}>2 · 镜头与脚本审阅</button></nav>
-    <div className="trk-vs-map"><MapView trackId={track.id} points={track.coordinates} segmentStarts={track.segmentStarts} name={track.name} basemap={basemap} onBasemap={onBasemap} placemarks={mapPoints} selectedPlacemark={selectedPlacemark} onSelectPlacemark={setSelectedPlacemark} onClosePlacemark={()=>setSelectedPlacemark(null)} placemarkEditingDisabled /></div>
+    <div className="trk-vs-map">{active&&<MapView trackId={track.id} points={track.coordinates} segmentStarts={track.segmentStarts} name={track.name} basemap={basemap} onBasemap={onBasemap} placemarks={mapPoints} selectedPlacemark={selectedPlacemark} onSelectPlacemark={setSelectedPlacemark} onClosePlacemark={()=>setSelectedPlacemark(null)} placemarkEditingDisabled />}</div>
     <p className="trk-muted trk-vs-map-note">地图用于核对轨迹和选题位置；下方是镜头计划，实际运镜视频尚未生成。</p>
     <p className="trk-vs-save" role="status" aria-live="polite">{saveState}</p>
     {cacheNotice&&<p className="trk-vs-notice">{cacheNotice}</p>}
@@ -247,5 +303,3 @@ function message(reason:unknown):string {return reason instanceof Error?reason.m
 const VIDEO_SCRIPT_CSS=`
 .trk-video-script{color:var(--trk-text);font:inherit;min-width:0;line-height:1.6}.trk-video-script *{box-sizing:border-box}.trk-vs-header,.trk-vs-section-head{display:flex;align-items:start;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:16px}.trk-video-script h2,.trk-video-script h3,.trk-video-script h4{margin:0 0 8px}.trk-video-script h2{font-size:calc(var(--trk-font-size)*1.5714)}.trk-video-script p{margin:6px 0 10px;overflow-wrap:anywhere}.trk-video-script button{min-height:44px;max-width:100%;white-space:normal;overflow-wrap:anywhere}.trk-video-script label{display:flex;flex-direction:column;gap:6px;margin-bottom:12px}.trk-video-script input:not([type=checkbox]),.trk-video-script textarea,.trk-video-script select{width:100%;min-width:0;min-height:44px;padding:9px 11px;border:1px solid var(--trk-border);border-radius:var(--trk-radius-sm);font:inherit;color:var(--trk-text);background:var(--trk-bg)}.trk-video-script textarea{min-height:85px;resize:vertical}.trk-video-script input[type=checkbox]{width:19px;height:19px;flex:none;accent-color:var(--trk-accent)}.trk-video-script input:disabled,.trk-video-script textarea:disabled{opacity:.65}.trk-video-script fieldset{border:0;padding:0;margin:16px 0;min-width:0}.trk-vs-steps,.trk-vs-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.trk-vs-steps{margin-bottom:16px}.trk-vs-map{height:310px;min-height:240px;overflow:hidden;border:1px solid var(--trk-border);border-radius:var(--trk-radius-md)}.trk-vs-map>.trk-map-wrap{height:100%;min-height:0}.trk-vs-map-note{font-size:.92em}.trk-vs-save{font-size:.92em;color:var(--trk-muted)}.trk-vs-notice{padding:12px 14px;border:1px solid var(--trk-notice-border);background:var(--trk-notice-bg);color:var(--trk-notice);border-radius:var(--trk-radius-sm);margin:12px 0;overflow-wrap:anywhere}.trk-vs-summary{display:flex;gap:8px;flex-wrap:wrap;list-style:none;padding:0}.trk-vs-summary li{padding:8px 12px;border:1px solid var(--trk-border);background:var(--trk-surface);border-radius:var(--trk-radius-sm)}.trk-vs-limits{margin:16px 0}.trk-video-script summary{cursor:pointer;min-height:44px;padding:9px 0;font-weight:600}.trk-video-script li{overflow-wrap:anywhere}.trk-vs-candidates{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin:18px 0}.trk-vs-candidate,.trk-vs-shot-editor,.trk-vs-ai{background:var(--trk-surface);border:1px solid var(--trk-border);border-radius:var(--trk-radius-md);padding:16px;min-width:0}.trk-vs-candidate.needs-info{border-style:dashed}.trk-vs-card-title{display:flex;justify-content:space-between;align-items:start;gap:12px}.trk-video-script .trk-vs-check{flex-direction:row;align-items:start;gap:10px;min-height:44px;margin-bottom:4px;cursor:pointer}.trk-vs-check strong{overflow-wrap:anywhere}.trk-vs-badge{font-size:.85em;white-space:nowrap;border:1px solid var(--trk-border);border-radius:20px;padding:2px 9px;color:var(--trk-muted)}.trk-vs-candidate dl{margin:8px 0 16px}.trk-vs-candidate dt{font-size:.9em;color:var(--trk-muted);margin:12px 0 2px}.trk-vs-candidate dd{margin:0;overflow-wrap:anywhere}.trk-vs-candidate dd p{margin:2px 0}.trk-vs-missing{color:var(--trk-warning)}.trk-vs-notes{margin:18px 0}.trk-vs-editor-layout{display:grid;grid-template-columns:minmax(220px,30%) minmax(0,1fr);gap:18px;margin:18px 0}.trk-vs-shot-list{list-style:none;margin:0;padding:0;align-self:start;display:grid;gap:10px}.trk-vs-shot-list li{border:1px solid var(--trk-border);border-radius:var(--trk-radius-sm);padding:10px;min-width:0}.trk-vs-shot-list li.active{border-color:var(--trk-accent);background:var(--trk-hover)}.trk-vs-shot-select{display:flex;width:100%;flex-direction:column;text-align:left;gap:4px;padding:6px;background:transparent;border:0;color:var(--trk-text);font:inherit;cursor:pointer}.trk-vs-shot-select small{color:var(--trk-muted)}.trk-vs-shot-tools{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}.trk-vs-shot-tools button{flex:1;padding:6px}.trk-vs-fields{display:grid;grid-template-columns:minmax(0,1fr) 180px;gap:12px}.trk-vs-ai{margin:18px 0}.trk-vs-ai .trk-vs-actions label{min-width:200px;flex:1;max-width:450px}.trk-vs-ai-proposal{margin:14px 0;padding:14px;border:1px solid var(--trk-border);border-radius:var(--trk-radius-sm)}.trk-vs-ai-proposal li{margin-bottom:16px}.trk-vs-export{margin:20px 0}.trk-vs-sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap}.trk-video-script .trk-error button{margin-left:12px}@media(max-width:800px){.trk-vs-candidates,.trk-vs-editor-layout{grid-template-columns:minmax(0,1fr)}.trk-vs-map{height:270px}.trk-vs-shot-list{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:480px){.trk-vs-fields,.trk-vs-shot-list{grid-template-columns:minmax(0,1fr)}.trk-vs-steps button{flex:1}.trk-vs-candidate,.trk-vs-shot-editor,.trk-vs-ai{padding:12px}.trk-vs-map{height:240px}}
 `
-
-

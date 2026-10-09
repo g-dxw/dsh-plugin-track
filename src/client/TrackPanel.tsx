@@ -6,9 +6,10 @@
  * track *means* lives in `useTracks` and `track/`; this file is the part that
  * decides where it sits on screen.
  */
-import { useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTracks } from './useTracks.ts'
 import { useTrackAgentDrawer, type TrackAgentServicesReader } from './useTrackAgentDrawer.ts'
+import {TrackAgentProjectRetentions} from './track-agent-projects.ts'
 import { TRACK_THEME_CSS } from './theme.ts'
 import { TrackOverview } from './TrackOverview.tsx'
 import { TrackEditor } from './TrackEditor.tsx'
@@ -30,6 +31,13 @@ export function TrackPanel(props: {getAgentServices?: TrackAgentServicesReader} 
 }
 
 function TrackPanelBody({getAgentServices}: {getAgentServices?: TrackAgentServicesReader}) {
+  const projectRetentions = useRef(new TrackAgentProjectRetentions())
+  useEffect(()=>()=>projectRetentions.current.releaseAll(),[])
+  const keepProjectSession = useCallback(async(sessionId:string,signal?:AbortSignal)=>{
+    const services=getAgentServices?.()
+    if(!services?.sessions.retain)throw new Error('当前宿主未提供项目 Agent 会话保留能力')
+    await projectRetentions.current.hold(services.sessions,sessionId,signal)
+  },[getAgentServices])
   const tracks = useTracks()
   const {settings, updateSettings, openSettings} = useMapSettings()
   const basemap = settings.basemap
@@ -91,7 +99,7 @@ function TrackPanelBody({getAgentServices}: {getAgentServices?: TrackAgentServic
           ? <TrackEditor key={editor.initial?.id ?? 'new'} initial={editor.initial} availableTracks={tracks.list} basemap={basemap} onBasemap={setBasemap}
               loadTrack={id => api<TrackRecord>(`track?id=${encodeURIComponent(id)}`)}
               onSave={async (inputs, options) => {await tracks.saveEdited(inputs); if (!options?.keepEditing) setEditor(null)}} onCancel={() => setEditor(null)} />
-          : videoScript ? <TrackVideoScript key={videoScript.id} track={videoScript} basemap={basemap} onBasemap={setBasemap} onCancel={()=>setVideoScript(null)} />
+          : videoScript ? <TrackVideoScript key={videoScript.id} track={videoScript} basemap={basemap} onBasemap={setBasemap} onCancel={()=>setVideoScript(null)} getAgentServices={getAgentServices} onKeepSession={keepProjectSession} />
           : animation ? <AnimationStudio key={animation.id} track={animation} basemap={basemap} onBasemap={setBasemap} onCancel={()=>setAnimation(null)} />
           : tracks.open ? null
           : <>

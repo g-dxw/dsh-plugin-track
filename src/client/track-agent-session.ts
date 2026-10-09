@@ -35,6 +35,8 @@ export interface TrackAgentServices {
     create(input: { workspaceId: string }): Promise<string>
     /** Official acquisition keeps that Session generation alive across main-view selection changes. */
     retain?(sessionId: string, options: { source: string; signal?: AbortSignal }): TrackAgentSessionReference
+    /** Official sessions controller: resolve a retained native Session scope. */
+    scope?(sessionId: string): unknown
   }
   readonly workspaces: {
     readonly list: SnapshotSource<WorkspaceCatalog>

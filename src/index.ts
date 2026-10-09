@@ -11,6 +11,9 @@ import { readPlacemarkEdits, writePlacemarkEdits } from './placemark-edits-store
 import { readPlacemarkGroups, writePlacemarkGroups } from './placemark-groups-store.ts'
 import { readPlacemarkState, writePlacemarkState, PlacemarkStateConflictError } from './placemark-state-store.ts'
 import { readGeoMotionProject, writeGeoMotionProject, GeoMotionProjectError } from './geomotion-project-store.ts'
+import {readShotEditorProject, writeShotEditorProject, ShotEditorProjectError} from './shot-editor-project-store.ts'
+import {SHOT_EDITOR_PROJECT_MAX_BYTES} from './track/shot-editor-project-types.ts'
+import {readShotProjectBackup, ShotProjectBackupError} from './shot-project-backup.ts'
 import { readVideoMaterials, writeVideoMaterials, VideoMaterialsError, VIDEO_MATERIALS_MAX_BYTES } from './video-materials-store.ts'
 import { readPlacemarkPhoto, writePlacemarkPhoto, PlacemarkPhotoError } from './placemark-photos-store.ts'
 import { PLACEMARK_PHOTO_MAX_BYTES } from './track/placemark-photos.ts'
@@ -20,6 +23,11 @@ import { validatePlacemarks } from './track/placemarks.ts'
 import { loadTextModels, analyzeRoute, generateAnimationScript, TrackAIError, type TrackAIAccount, type TextAIRequest } from './ai.ts'
 import { generateTrackVideoScript } from './video-script-ai.ts'
 import type { VideoScriptRequest } from './track/video-script-types.ts'
+import { handleResourceRoute } from './resource-routes.ts'
+import {handleOpenMontageRoute} from './openmontage-routes.ts'
+import {disposeOpenMontage} from './openmontage-runtime.ts'
+import {OpenMontageError} from './openmontage-store.ts'
+import type {ShotProjectScope} from './track/shot-project-scope.ts'
 
 export const name = 'cqai-track'
 // Cordis object-form injection maps service names to intercept configuration;
@@ -30,6 +38,15 @@ export const inject = ['webServer']
 function json(res: ServerResponse, code: number, data: unknown): void {
   res.writeHead(code, {'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store'})
   res.end(JSON.stringify(data))
+}
+function editorScope(projectId: unknown, shotId: unknown): ShotProjectScope | undefined {
+  if (projectId === undefined && shotId === undefined) return undefined
+  if(typeof projectId!=='string'||typeof shotId!=='string'||!projectId||!shotId)throw new OpenMontageError('项目与分镜作用域必须同时提供')
+  return {projectId,shotId}
+}
+function queryEditorScope(url:URL): ShotProjectScope|undefined {
+  if(['projectId','shotId'].some(key=>url.searchParams.getAll(key).length>1))throw new OpenMontageError('镜头作用域参数重复')
+  return editorScope(url.searchParams.get('projectId')??undefined,url.searchParams.get('shotId')??undefined)
 }
 
 /**
@@ -43,7 +60,7 @@ export function permitted(req: IncomingMessage): boolean {
   const origin = req.headers.origin
   if (origin && origin !== `http://${req.headers.host}` && origin !== `https://${req.headers.host}`) return false
   if (req.headers['sec-fetch-site'] === 'cross-site') return false
-  return req.method === 'GET' || req.headers['x-cqai-track'] === '1'
+  return req.method === 'GET' || req.method === 'HEAD' || req.headers['x-cqai-track'] === '1'
 }
 
 /**
@@ -76,6 +93,21 @@ async function readVideoMaterialsJson(req: IncomingMessage): Promise<unknown> {
     else chunks.push(bytes)
   }
   if (oversized) throw new VideoMaterialsError('视频素材准备最多 16 MiB', 413)
+  return chunks.length ? JSON.parse(Buffer.concat(chunks, size).toString('utf8')) : {}
+}
+/** Drain overflow so an oversized project still receives a concrete 413 response. */
+async function readShotEditorProjectJson(req: IncomingMessage): Promise<unknown> {
+  const limit = SHOT_EDITOR_PROJECT_MAX_BYTES + 4096
+  const chunks: Buffer[] = []
+  let size = 0, oversized = Number(req.headers['content-length']) > limit
+  for await (const chunk of req) {
+    const bytes = Buffer.from(chunk)
+    size += bytes.length
+    if (size > limit) oversized = true
+    if (oversized) chunks.length = 0
+    else chunks.push(bytes)
+  }
+  if (oversized) throw new ShotEditorProjectError('三维镜头工程最多 2 MB', 413)
   return chunks.length ? JSON.parse(Buffer.concat(chunks, size).toString('utf8')) : {}
 }
 async function readPhoto(req: IncomingMessage): Promise<Buffer> {
@@ -149,6 +181,8 @@ export function apply(ctx: Context): void {
         const url = new URL(req.url!, 'http://localhost')
         const action = url.pathname.slice(API.length + 1)
         const id = url.searchParams.get('id') ?? ''
+        if (await handleResourceRoute(req, res, url)) return
+        if (await handleOpenMontageRoute(req,res,url)) return
         if (req.method === 'POST' && action === 'agent-workspace') {
           const body = await readJson(req) as {trackId?: string | null}
           if (!body || typeof body !== 'object' || Array.isArray(body)) throw new TrackAgentStoreError('Agent 工作区请求格式无效')
@@ -225,11 +259,26 @@ export function apply(ctx: Context): void {
           if (!body || typeof body !== 'object' || Array.isArray(body) || typeof body.id !== 'string') throw new VideoMaterialsError('缺少轨迹编号')
           return json(res, 200, {materials: writeVideoMaterials(body.id, body.document, body.expectedRevision)})
         }
-        if (req.method === 'GET' && action === 'geomotion-project') return json(res, 200, {project: readGeoMotionProject(id)})
+        if (req.method === 'GET' && action === 'shot-project-backup') {
+          const scope=queryEditorScope(url)
+          if (url.searchParams.size !== (scope?4:2) || ['id', 'scene'].some(key => url.searchParams.getAll(key).length !== 1)) throw new ShotProjectBackupError('镜头备份参数无效')
+          const backup = readShotProjectBackup(id, url.searchParams.get('scene'),process.env,scope)
+          res.writeHead(200, {'content-type': 'application/json', 'content-length': String(backup.body.length),
+            'content-disposition': `attachment; filename="${backup.filename}"`, 'cache-control': 'no-store', 'x-content-type-options': 'nosniff'})
+          res.end(backup.body)
+          return
+        }
+        if (req.method === 'GET' && action === 'geomotion-project') return json(res, 200, {project: readGeoMotionProject(id,process.env,queryEditorScope(url))})
         if (req.method === 'POST' && action === 'geomotion-project') {
-          const body = await readJson(req) as {id?: unknown; project?: unknown; expectedRevision?: unknown}
+          const body = await readJson(req) as {id?: unknown; project?: unknown; expectedRevision?: unknown; projectId?:unknown;shotId?:unknown}
           if (!body || typeof body !== 'object' || Array.isArray(body) || typeof body.id !== 'string') throw new GeoMotionProjectError('缺少轨迹编号')
-          return json(res, 200, {project: writeGeoMotionProject(body.id, body.project, body.expectedRevision)})
+          return json(res, 200, {project: writeGeoMotionProject(body.id, body.project, body.expectedRevision,process.env,editorScope(body.projectId,body.shotId))})
+        }
+        if (req.method === 'GET' && action === 'shot-editor-project') return json(res, 200, {project: readShotEditorProject(id,process.env,queryEditorScope(url))})
+        if (req.method === 'POST' && action === 'shot-editor-project') {
+          const body = await readShotEditorProjectJson(req) as {id?: unknown; project?: unknown; expectedRevision?: unknown; projectId?:unknown;shotId?:unknown}
+          if (!body || typeof body !== 'object' || Array.isArray(body) || typeof body.id !== 'string') throw new ShotEditorProjectError('缺少轨迹编号')
+          return json(res, 200, {project: writeShotEditorProject(body.id, body.project, body.expectedRevision,process.env,editorScope(body.projectId,body.shotId))})
         }
         if (req.method === 'GET' && action === 'placemark-state') return json(res, 200, {state: readPlacemarkState(id)})
         if (req.method === 'POST' && action === 'placemark-state') {
@@ -309,10 +358,10 @@ export function apply(ctx: Context): void {
         }
         json(res, 404, {error: '接口不存在'})
       } catch (error) {
-        if ((error instanceof PlacemarkPhotoError || error instanceof VideoMaterialsError) && error.status === 413) res.setHeader('connection', 'close')
-        if (!res.headersSent && !res.destroyed) json(res, error instanceof TrackAIError || error instanceof PlacemarkStateConflictError || error instanceof PlacemarkPhotoError || error instanceof GeoMotionProjectError || error instanceof VideoMaterialsError || error instanceof TrackAgentStoreError ? error.status : 400, {error: error instanceof Error ? error.message : '操作失败'})
+        if ((error instanceof PlacemarkPhotoError || error instanceof VideoMaterialsError || error instanceof ShotEditorProjectError) && error.status === 413) res.setHeader('connection', 'close')
+        if (!res.headersSent && !res.destroyed) json(res, error instanceof OpenMontageError || error instanceof TrackAIError || error instanceof PlacemarkStateConflictError || error instanceof PlacemarkPhotoError || error instanceof GeoMotionProjectError || error instanceof ShotEditorProjectError || error instanceof ShotProjectBackupError || error instanceof VideoMaterialsError || error instanceof TrackAgentStoreError ? error.status : 400, {error: error instanceof Error ? error.message : '操作失败'})
       }
     }})
-    return () => {unregister()}
+    return () => {unregister();disposeOpenMontage()}
   }, '轨迹存储与本地服务')
 }

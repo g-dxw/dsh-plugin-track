@@ -115,7 +115,7 @@ describe('native track Agent project workspaces', () => {
     }
     expect(snapshot(id).current.track.coordinates).toBeUndefined()
     expect(ensureTrackAgentWorkspace(env, id).path).toBe(first.path)
-    expect(snapshot(id).current.pageTitle).toBe('镜头案例与脚本')
+    expect(snapshot(id).current.pageTitle).toBe('轨迹视频制作')
     expect(readFileSync(join(library.path, 'track-context.json'), 'utf8')).toBe(libraryContext)
     expect(readFileSync(join(directory, 'track.json'), 'utf8')).toBe(original)
     expect(readFileSync(join(directory, 'source.gpx'), 'utf8')).toBe('<gpx>original</gpx>')

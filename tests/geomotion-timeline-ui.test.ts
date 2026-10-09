@@ -232,6 +232,14 @@ describe('clip editing and layer locks', () => {
     expect(props.onLayerRange).not.toHaveBeenCalled(); expect(props.onToggleLayer).not.toHaveBeenCalled()
     expect([clip('source').in, clip('source').out]).toEqual([0, 10])
   })
+  it('can disable unsupported visibility controls while retaining clip time editing', async () => {
+    await render({layers: props.layers.map(layer => layer.id === 'label' ? {...layer, visibilityLocked: true} : layer)})
+    const visibility = host.querySelector<HTMLInputElement>('[aria-label="显示图层：地名片段"]')!
+    expect(visibility.disabled).toBe(true); await act(async () => visibility.click())
+    expect(props.onToggleLayer).not.toHaveBeenCalled()
+    const item = button('移动片段：地名片段'); expect(item.disabled).toBe(false)
+    await press(item, 'ArrowRight'); expect(props.onLayerRange).toHaveBeenLastCalledWith('label', {in: 1.05, out: 6.05}, 'move')
+  })
   it('disables document edits while locked and rejects synthetic pointer and key events too', async () => {
     await render({disabled: true, editDisabled: true, recording: true})
     const key = keyButton(1), item = button('移动片段：轨迹片段')
@@ -245,6 +253,52 @@ describe('clip editing and layer locks', () => {
     await pointer(item, 'pointerdown', 400); await pointer(item, 'pointermove', 550)
     await render({editDisabled: true}); await pointer(window, 'pointerup', 550)
     expect(props.onLayerRange).not.toHaveBeenCalled(); expect([clip('route').in, clip('route').out]).toEqual([2, 5])
+  })
+})
+
+describe('independent keyframe lanes', () => {
+  function multiLaneProps(): Partial<GeoMotionTimelineProps> {
+    return {
+      keys: [], selectedKeyId: 'shared', selectedLaneId: 'route',
+      keyLanes: [{id: 'camera', name: '相机', keys: [{id: 'shared', t: 1}, {id: 'camera-other', t: 1.05}]}, {id: 'route', name: '路线进度', keys: [{id: 'shared', t: 1}, {id: 'route-other', t: 4}]}],
+      onSelectLane: vi.fn(id => {props = {...props, selectedLaneId: id}; redraw()}),
+      onSelectKey: vi.fn((id, t, laneId) => {props = {...props, selectedKeyId: id, selectedLaneId: laneId, time: t}; redraw()}),
+      onKeyTime: vi.fn((id, t, laneId) => {props = {...props, keyLanes: props.keyLanes!.map(lane => lane.id === laneId ? {...lane, keys: lane.keys.map(key => key.id === id ? {...key, t} : key)} : lane)}; redraw()}),
+    }
+  }
+  it('edits structural keys and checks keyboard collisions only within the selected lane', async () => {
+    await render(multiLaneProps())
+    expect(button('路线进度关键帧 1 秒').getAttribute('aria-pressed')).toBe('true')
+    expect(button('相机关键帧 1 秒').getAttribute('aria-pressed')).toBe('false')
+    await press(button('路线进度关键帧 1 秒'), 'ArrowRight')
+    expect(props.onKeyTime).toHaveBeenLastCalledWith('shared', 1.05, 'route')
+    expect(props.keyLanes![0].keys[0].t).toBe(1)
+    await press(button('相机关键帧 1 秒'), 'ArrowRight')
+    expect(props.onKeyTime).toHaveBeenCalledTimes(1)
+    expect(host.textContent).toContain('原关键帧保留')
+    expect(props.onLayerRange).not.toHaveBeenCalled()
+  })
+  it('keeps duplicate key IDs separate while dragging and commits only to their own lane', async () => {
+    await render(multiLaneProps()); const route = button('路线进度关键帧 1 秒')
+    await pointer(route, 'pointerdown', 200); await pointer(route, 'pointermove', 450)
+    expect(button('相机关键帧 1 秒').classList.contains('is-dragging')).toBe(false)
+    expect(button('路线进度关键帧 3.5 秒').classList.contains('is-dragging')).toBe(true)
+    expect(props.onKeyTime).not.toHaveBeenCalled()
+    await pointer(route, 'pointerup', 450)
+    expect(props.onKeyTime).toHaveBeenCalledExactlyOnceWith('shared', 3.5, 'route')
+    expect(props.keyLanes![0].keys[0].t).toBe(1)
+    expect(props.keyLanes![1].keys[0].t).toBe(3.5)
+  })
+  it('adds on the selected lane and rejects a same-lane drag collision without swallowing key identity', async () => {
+    await render(multiLaneProps()); await act(async () => button('添加关键帧').click())
+    expect(props.onAddKey).toHaveBeenLastCalledWith('route')
+    const route = button('路线进度关键帧 1 秒')
+    await pointer(route, 'pointerdown', 200); await pointer(route, 'pointermove', 500); await pointer(route, 'pointerup', 500)
+    expect(props.onKeyTime).not.toHaveBeenCalled(); expect(props.keyLanes![1].keys.map(key => key.id)).toEqual(['shared', 'route-other'])
+    const lane = host.querySelector<HTMLButtonElement>('[data-key-lane=camera]')!.previousElementSibling!.querySelector<HTMLButtonElement>('button')!
+    await act(async () => lane.click()); await act(async () => button('添加关键帧').click())
+    expect(props.onAddKey).toHaveBeenLastCalledWith('camera')
+    expect(props.onSelectLane).toHaveBeenLastCalledWith('camera')
   })
 })
 

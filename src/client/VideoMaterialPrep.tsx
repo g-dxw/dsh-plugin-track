@@ -8,8 +8,10 @@ import {readAnnotationPhoto, readLinkedAnnotationPhoto} from './annotation-photo
 import {api, clipboardSafeName, download} from './util.ts'
 import {VIDEO_MATERIAL_PREP_CSS} from './video-material-prep-css.ts'
 import {useVideoCanvasNavigation} from './useVideoCanvasNavigation.ts'
+import {VideoResourceImagePicker} from './VideoResourceImagePicker.tsx'
+import {useEditorNavigation, type EditorNavigationHandle} from './editor-navigation.tsx'
 
-type Props = {track: TrackRecord; onBack: () => void; onCompose: (document: VideoMaterialsDocument) => void}
+type Props = {track: TrackRecord; onBack: () => void; onCompose: (document: VideoMaterialsDocument) => void; active?:boolean; onRegister?:(value:EditorNavigationHandle|null)=>void}
 type Envelope = VideoMaterialsEnvelope
 type Reply = {materials: Envelope | null}
 type Marker = VideoMaterialsDocument['markers'][number]
@@ -25,7 +27,7 @@ const maxImportBytes = 16 * 1024 * 1024
 
 /** Each track has isolated history, requests and photo selection. */
 export function VideoMaterialPrep(props: Props) {return <MaterialWorkspace key={props.track.id} {...props}/>}
-function MaterialWorkspace({track, onBack, onCompose}: Props) {
+function MaterialWorkspace({track, onBack, onCompose, active=true, onRegister}: Props) {
   const placemarks = useTrackPlacemarks(track, undefined, {preparePhotos: false})
   const sourceTrack = useMemo(() => ({...track, segmentStarts: placemarks.routeContext?.segmentStarts || track.segmentStarts}), [track, placemarks.routeContext])
   const sourceReady = placemarks.editReady && !placemarks.loading && !placemarks.error && !placemarks.stateError && !!placemarks.routeContext && !placemarks.routeError
@@ -40,7 +42,7 @@ function MaterialWorkspace({track, onBack, onCompose}: Props) {
   const [tool, setTool] = useState<'select' | 'pan' | 'add' | 'point'>('select')
   const [saving, setSaving] = useState(false), [photoBusy, setPhotoBusy] = useState(false), [importBusy, setImportBusy] = useState(false)
   const [status, setStatus] = useState('正在读取素材…'), [error, setError] = useState(''), [photoError, setPhotoError] = useState('')
-  const [leavePrompt, setLeavePrompt] = useState(false), [rebuildPrompt, setRebuildPrompt] = useState(false)
+  const [rebuildPrompt, setRebuildPrompt] = useState(false)
   const [labelGhost, setLabelGhost] = useState<{id: string; x: number; y: number} | null>(null)
   const alive = useRef(true), initialized = useRef(false), latest = useRef(document), revisionRef = useRef(revision)
   const busyRef = useRef(false), photoRequest = useRef(0), importRequest = useRef(0), drag = useRef<LabelDrag | null>(null)
@@ -65,7 +67,11 @@ function MaterialWorkspace({track, onBack, onCompose}: Props) {
     try {return track.coordinates.length ? {points: diagramCoordinates(track.coordinates), height: diagramHeight(track.coordinates), error: ''} : {points: [], height: 900, error: '当前轨迹没有坐标'}}
     catch (reason) {return {points: [], height: 900, error: message(reason)}}
   }, [track.coordinates])
-  const navigation = useVideoCanvasNavigation({viewport: canvasScroll, mode: tool, disabled: busy || !!projection.error || leavePrompt || rebuildPrompt, canNavigate: () => !drag.current && !busyRef.current})
+  const editorNavigation = useEditorNavigation({active,dirty,busy,save:async()=>!!await save(),discard:()=>{
+    const previous=baseline?validateVideoMaterials(JSON.parse(baseline)):currentSource?.document?structuredClone(currentSource.document):null
+    latest.current=previous;setDocument(previous);if(!baseline&&previous)setBaseline(serialise(previous));setPast([]);setFuture([]);setError('');setStatus('已放弃本次未保存修改')
+  },onRegister})
+  const navigation = useVideoCanvasNavigation({viewport: canvasScroll, mode: tool, disabled: !active || busy || !!projection.error || !!editorNavigation.dialog || rebuildPrompt, canNavigate: () => !drag.current && !busyRef.current})
   const {zoom, x: panX, y: panY} = navigation.view
   const fitWidth = Math.max(1, Math.min(Math.max(1, (viewport.width || 600) - 48), Math.max(1, (viewport.height || 500) - 48) * 1200 / projection.height))
   const canvasWidth = fitWidth * zoom / 100, canvasHeight = canvasWidth * projection.height / 1200
@@ -189,8 +195,7 @@ function MaterialWorkspace({track, onBack, onCompose}: Props) {
     if (!counts.markers && !counts.segments && !counts.information) {setError('请至少选择一项用于视频的素材'); return}
     const saved = await save(); if (saved && alive.current) onCompose(saved)
   }
-  function back() {if (busyRef.current) return; if (dirty) setLeavePrompt(true); else onBack()}
-  async function saveAndBack() {const saved = await save(); if (saved && alive.current) onBack()}
+  function back() {editorNavigation.requestLeave(onBack)}
   async function choosePhoto(file: File | string) {
     const id = markerId, previous = latest.current
     if (!id || !previous || !canEdit || busyRef.current) return
@@ -292,7 +297,7 @@ function MaterialWorkspace({track, onBack, onCompose}: Props) {
   function keyboard(event: KeyboardEvent<HTMLDivElement>) {
     const target = event.target as HTMLElement
     if (event.key === 'Escape' && drag.current) {drag.current = null; setLabelGhost(null); setStatus('已取消文字拖动'); return}
-    if (leavePrompt || rebuildPrompt || !workspace.current?.contains(globalThis.document.activeElement) || target.matches('input,textarea,select,[contenteditable="true"]') || busyRef.current) return
+    if (!active || editorNavigation.dialog || rebuildPrompt || !workspace.current?.contains(globalThis.document.activeElement) || target.matches('input,textarea,select,[contenteditable="true"]') || busyRef.current) return
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') {event.preventDefault(); undo(event.shiftKey)}
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'y') {event.preventDefault(); undo(true)}
   }
@@ -312,7 +317,7 @@ function MaterialWorkspace({track, onBack, onCompose}: Props) {
   return <div className="trk-vm" ref={workspace} tabIndex={0} onKeyDown={keyboard} data-panel={mobilePanel} aria-label="二维素材准备编辑器">
     <style>{VIDEO_MATERIAL_PREP_CSS}</style>
     <header className="trk-vm-header">
-      <div className="trk-vm-heading"><button type="button" onClick={back} disabled={busy}>返回</button><div><h2>二维素材准备</h2><p>确认地点、路线、图片和介绍，再编排镜头</p></div></div>
+      <div className="trk-vm-heading"><button type="button" onClick={back} disabled={busy}>返回镜头编辑</button><div><h2>素材准备</h2><p>确认地点、路线、图片和介绍，再编排镜头</p></div></div>
       <div className="trk-vm-actions"><button type="button" onClick={() => undo()} disabled={!canEdit || !past.length}>撤销</button><button type="button" onClick={() => undo(true)} disabled={!canEdit || !future.length}>重做</button><button type="button" onClick={() => void save()} disabled={!document || busy || loadState !== 'ready'}>{saving ? '保存中…' : '保存素材'}</button><button type="button" className="trk-vm-primary" onClick={() => void compose()} disabled={!canEdit || !geometryCompatible}>用所选素材编排镜头</button></div>
     </header>
     <div className="trk-vm-summary" aria-live="polite"><span>{status}{dirty ? ' · 有未保存修改' : ''}</span><span>已选 {counts.markers} 个标记 · {counts.segments} 段路线 · {counts.photos} 张图片 · {counts.information} 条介绍</span></div>
@@ -364,6 +369,7 @@ function MaterialWorkspace({track, onBack, onCompose}: Props) {
             {activeMarker && <fieldset disabled={!canEdit} className="trk-vm-fields"><legend>地点属性</legend><label>展示名称<input aria-label="标记名称" value={activeMarker.name} maxLength={160} onChange={event => patchMarker({name: event.target.value})}/></label><label>介绍说明<textarea aria-label="标记说明" value={activeMarker.description} maxLength={4000} rows={3} onChange={event => patchMarker({description: event.target.value})}/></label><label className="trk-vm-inline">颜色<input type="color" aria-label="标记颜色" value={activeMarker.color} onChange={event => patchMarker({color: event.target.value})}/></label><p className="trk-vm-coordinates">经度 {activeMarker.coordinates[0].toFixed(6)} · 纬度 {activeMarker.coordinates[1].toFixed(6)}<br/>对应轨迹点 {activeMarker.pointIndex}（从 0 开始）</p><div className="trk-vm-two"><label>文字横向偏移<input type="number" aria-label="文字横向偏移" min={-1200} max={1200} value={activeMarker.labelOffset?.x ?? 18} onChange={event => {const value = event.target.valueAsNumber; if (Number.isFinite(value)) patchMarker({labelOffset: {x: Math.max(-1200, Math.min(1200, value)), y: activeMarker.labelOffset?.y ?? -14}})}}/></label><label>文字纵向偏移<input type="number" aria-label="文字纵向偏移" min={-1200} max={1200} value={activeMarker.labelOffset?.y ?? -14} onChange={event => {const value = event.target.valueAsNumber; if (Number.isFinite(value)) patchMarker({labelOffset: {x: activeMarker.labelOffset?.x ?? 18, y: Math.max(-1200, Math.min(1200, value))}})}}/></label></div><p className="trk-vm-help">文字偏移仅影响二维排版，地点仍使用真实坐标。</p><button type="button" className="trk-vm-danger" onClick={() => {const id = activeMarker.id; mutate(next => {next.markers = next.markers.filter(item => item.id !== id)}); setMarkerId('')}}>删除这个标记</button></fieldset>}
             {activeMarker && <section className="trk-vm-photo-picker" aria-label="展示图片"><h3>展示图片</h3>{activeMarker.photo ? <div className="trk-vm-selected-photo"><img src={activeMarker.photo.dataUrl} alt={`${labelName(activeMarker.name, '地点')}的展示图片`} onError={() => setPhotoError('选中的图片无法显示，请重新选择图片')}/><button type="button" onClick={() => {mutate(next => {const marker = next.markers.find(item => item.id === activeMarker.id); if (marker) delete marker.photo}); setPhotoError('')}} disabled={!canEdit}>删除选图</button></div> : <p className="trk-vm-help">为这个地点选择一张展示图片。</p>}
               <div className="trk-vm-photo-candidates">{activeMarker.photoCandidates.map((url, index) => <div key={url}><span title={url}>{index + 1}. {shortPhotoName(url, index)}</span><button type="button" aria-label={`使用这张图片：${index + 1}`} onClick={() => void choosePhoto(url)} disabled={!canEdit || activeMarker.photo?.sourceUrl === url}>{activeMarker.photo?.sourceUrl === url ? '已选' : '使用这张'}</button></div>)}</div>
+              <VideoResourceImagePicker key={track.id} trackId={track.id} disabled={!canEdit} onChoose={url=>void choosePhoto(url)}/>
               <label className="trk-vm-file-button">上传本地图片<input type="file" aria-label="上传展示图片" accept="image/png,image/jpeg,image/webp" disabled={!canEdit} onChange={event => {const file = event.target.files?.[0]; event.target.value = ''; if (file) void choosePhoto(file)}}/></label>{photoBusy && <p role="status">正在读取所选图片…</p>}{photoError && <p className="trk-vm-error" role="alert">{photoError}</p>}
             </section>}
           </>}
@@ -381,7 +387,7 @@ function MaterialWorkspace({track, onBack, onCompose}: Props) {
       </aside>
     </div>
     <footer className="trk-vm-footer"><span>素材单独保存 · 原始轨迹和点位保持原样</span><div><button type="button" onClick={() => setRebuildPrompt(true)} disabled={!canEdit}>从当前轨迹重新提取</button><button type="button" onClick={() => {if (document) download(`${clipboardSafeName(document.title || track.name)}-视频素材.json`, JSON.stringify(document, null, 2))}} disabled={!document || busy}>导出素材 JSON</button><label className="trk-vm-file-button">导入素材 JSON<input type="file" accept="application/json,.json" aria-label="导入素材 JSON" disabled={!canEdit} onChange={event => void importJson(event)}/></label></div></footer>
-    {leavePrompt && <div className="trk-vm-modal-backdrop"><section role="dialog" aria-modal="true" aria-labelledby={`vm-leave-${track.id}`} className="trk-vm-dialog" onKeyDown={event => dialogKeyboard(event, () => setLeavePrompt(false))}><h3 id={`vm-leave-${track.id}`}>素材尚未保存</h3><p>保存当前选择和修改后，再返回轨迹。</p><div><button type="button" autoFocus onClick={() => setLeavePrompt(false)} disabled={busy}>留在页面</button><button type="button" className="trk-vm-primary" onClick={() => void saveAndBack()} disabled={busy}>{saving ? '保存中…' : '保存后返回'}</button></div>{error && <p role="alert">{error}</p>}</section></div>}
+    {editorNavigation.dialog}
     {rebuildPrompt && <div className="trk-vm-modal-backdrop"><section role="dialog" aria-modal="true" aria-labelledby={`vm-rebuild-${track.id}`} className="trk-vm-dialog" onKeyDown={event => dialogKeyboard(event, () => setRebuildPrompt(false))}><h3 id={`vm-rebuild-${track.id}`}>重新提取素材</h3><p>将当前真实轨迹、地点和已保存 SVG 标注重新带入。当前编辑可通过撤销恢复。</p><div><button type="button" autoFocus onClick={() => setRebuildPrompt(false)}>保留当前素材</button><button type="button" className="trk-vm-primary" onClick={rebuild} disabled={!canEdit}>确认重新提取</button></div></section></div>}
   </div>
 }
