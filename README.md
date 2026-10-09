@@ -24,7 +24,7 @@
 
 每条轨迹独立保存工程，来源变化时可手动重建。工程底图随工程保存，地图服务和地形配置继续共享。导出把地图、地名、文字和署名合成后，以固定时间戳编码 VP9 WebM，可选择横/竖屏、帧率并取消导出。当前未接音乐、旁白混音与 MP4。
 
-[集成说明](docs/geomotion-integration-plan.md)、[运行验收](docs/geomotion-integration-validation.md)、[多轨时间轴验收](docs/geomotion-timeline-validation.md)与[二维素材验收](docs/video-materials-validation.md)记录具体边界。GeoMotion 上游公开许可证尚未声明；发布者已在 2026-10-08 的 npm 发布中确认取得分发权限，本版沿用该确认。来源与许可记录见 [第三方声明](THIRD_PARTY_NOTICES.md)。
+[集成说明](docs/geomotion-integration-plan.md)、[运行验收](docs/geomotion-integration-validation.md)、[多轨时间轴验收](docs/geomotion-timeline-validation.md)与[二维素材验收](docs/video-materials-validation.md)记录具体边界。来源与许可记录见 [第三方声明](THIRD_PARTY_NOTICES.md)。
 
 可复用的[武功山位置介绍示例](examples/wugongshan-location-preview/README.md)展示区域定位、推进真实山体与路线绘制，工程及图层时间均可编辑；大型视频和运行缓存由本地生成。
 

@@ -59,11 +59,11 @@ flowchart LR
 
 首版为 VP9 WebM，无音乐/旁白混音与 MP4 输出；采用内存 BufferTarget，长片会增加浏览器内存占用。地名为二维 Canvas overlay，没有山体遮挡，也未实现自动避让。精简界面可渲染兼容 JSON 中的更多图层，但暂不提供完整 GeoMotion 素材和高级属性编辑器。
 
-## 本地验证与源码许可
+## 本地验证与来源记录
 
 整体验收、隔离预览和样片见 `docs/geomotion-integration-validation.md`，剪辑式时间轴更新见 `docs/geomotion-timeline-validation.md`。预览使用武功山真实轨迹快照、既有真实 Esri 影像及真实 Mapterhorn DEM；工程写入独立的测试目录，不改原轨迹。
 
-Track 的已保存基线为 `0276a0d40473d29f8cedca422b3c718ef3661626`。GeoMotion 固定来源为 `a911219b1f0d704aa10f1fc915df65c21f612ec1`；本地克隆没有 LICENSE/COPYING 或 package license，此快照按用户授权用于本地原型，不能将 Track 的 AGPL 自动赋予上游源码，正式分发前仍需明确其许可。
+Track 的已保存基线为 `0276a0d40473d29f8cedca422b3c718ef3661626`。GeoMotion 固定来源为 `a911219b1f0d704aa10f1fc915df65c21f612ec1`；发布者已于 2026-10-08 确认取得分发权限，日常发行沿用该确认，详见 [分发确认记录](releases/geomotion-distribution-record.md)。
 
 视频导出参考仓库 `bjperson/maplibre-gl-video-export` 固定提交 `cc358e34221ce95c6f7381d8d2a5c9fd0ac0a9ad`，上游为 BSD-3-Clause。实际新增依赖 Immer 10.1.1（MIT）和 Mediabunny 1.24.2（MPL-2.0），详见 `PROVENANCE.md`。原型验证阶段没有发布、推送或修改两个相邻参考仓库。
 ## 二维素材准备（2026-10-04）

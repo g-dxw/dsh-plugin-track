@@ -261,11 +261,13 @@
       "sourceManifestPath": "src/track/vendor/geomotion/source-manifest.json",
       "sourceManifestSha256": "874452b16b18996e37f7ec795c8393fcc08de88b3be3b2dceb3811ce5a7d8ec9",
       "sourceNoticePath": "src/track/vendor/geomotion/SOURCE.md",
-      "sourceNoticeSha256": "79ec22b9770be3a7aa952f0cf64c6b25a1372d88859ad362d9efe51b280cf6c4",
+      "sourceNoticeSha256": "93593eebfa8c81e7f43b95a1d641d80f69dccc69310799b3f7d7b4b75cd3aa04",
       "license": null,
-      "status": "upstream-license-undeclared",
-      "distributionBasis": "Publisher confirmed permission obtained and explicitly requested npm publication on 2026-10-08; no written permission terms were attached.",
-      "note": "The pinned upstream repository does not declare a license. It is not relicensed as Track AGPL-3.0-only. For this npm publication, the publisher stated that permission had been obtained and explicitly requested publication. Written permission terms were not attached to this snapshot. Copyright remains with the upstream authors; this notice does not grant a new public license or infer one from repository visibility."
+      "status": "distribution-permission-confirmed",
+      "upstreamLicenseStatus": "undeclared",
+      "distributionConfirmedOn": "2026-10-08",
+      "distributionBasis": "Publisher confirmed permission obtained and explicitly requested npm publication on 2026-10-08. Routine releases of this pinned snapshot reuse that confirmation.",
+      "note": "Distribution permission for this pinned snapshot is recorded as confirmed by the publisher on 2026-10-08. The completed record is in [geomotion-distribution-record.md](docs/releases/geomotion-distribution-record.md). Copyright remains with the upstream authors; the original license record is retained in SOURCE.md."
     }
   ],
   "trackLicense": {

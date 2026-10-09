@@ -4,7 +4,7 @@
 
 日期：2026-10-07。
 
-当前安排是继续本地验证，保留地图镜头编辑器；授权询问和对外发布暂缓。
+2026-10-07 的安排是继续本地验证，保留地图镜头编辑器；当时未对外发布候选包。
 
 ## 候选包
 
@@ -54,4 +54,4 @@
 - `local-validation/preservation-report.json`：其他 121 个原有工作区文件哈希保持一致，暂存区为空，HEAD 未变。
 - `candidate-status.json`：本地验证状态，`authorContacted: false`、`publicReleaseCreated: false`、`notForDistribution: true`。
 
-GeoMotion 的分发权限仍未明确；没有创建 Release、发布版本标签或向作者发送 Issue。
+截至这次历史验证，没有创建 Release、发布版本标签或向作者发送 Issue。后续分发确认见 [分发确认记录](geomotion-distribution-record.md)。

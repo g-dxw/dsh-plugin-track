@@ -2,7 +2,7 @@
 
 This document accompanies the Track plugin source and compiled bundles. Third-party components keep their original copyright and license notices. The files below contain the complete license texts copied from the exact installed npm versions; MapLibre's complete LICENSE.txt includes its additional third-party notices. Machine-readable source URLs and SHA-256 hashes are in [licenses/manifest.json](licenses/manifest.json).
 
-Evidence checked: 2026-10-08. This is a license-text and provenance inventory. Separate publisher confirmation for GeoMotion distribution is recorded below; no new upstream public license is granted.
+Evidence checked: 2026-10-08. This is a license-text and provenance inventory. The completed GeoMotion distribution confirmation is recorded below.
 
 ## Bundled npm components
 
@@ -35,14 +35,14 @@ Source comparison uses the official @tmcw/togeojson 5.8.1 npm artifact and commi
 
 Status: **verified-upstream-derived-fork**. The fork contains modifications, so it is not described as an unmodified exact npm release. This BSD notice preserves the upstream component's rights and does not replace the project license applicable to VoyageTrack/Track modifications.
 
-## GeoMotion: upstream public license undeclared
+## GeoMotion: source and distribution confirmation
 
 Source: [https://github.com/databandar/geomotion](https://github.com/databandar/geomotion), pinned commit [a911219b1f0d704aa10f1fc915df65c21f612ec1](https://github.com/databandar/geomotion/tree/a911219b1f0d704aa10f1fc915df65c21f612ec1).
 
-The original source notice remains in [SOURCE.md](src/track/vendor/geomotion/SOURCE.md), with individual upstream and adjusted file hashes in [source-manifest.json](src/track/vendor/geomotion/source-manifest.json). Its public license status is recorded as **upstream-license-undeclared**.
+The original source notice remains in [SOURCE.md](src/track/vendor/geomotion/SOURCE.md), with individual upstream and adjusted file hashes in [source-manifest.json](src/track/vendor/geomotion/source-manifest.json). Distribution status: **distribution-permission-confirmed**. Routine releases of this pinned snapshot reuse the confirmation recorded on 2026-10-08.
 
-The pinned upstream repository does not declare a license. It is not relicensed as Track AGPL-3.0-only. For this npm publication, the publisher stated that permission had been obtained and explicitly requested publication. Written permission terms were not attached to this snapshot. Copyright remains with the upstream authors; this notice does not grant a new public license or infer one from repository visibility.
+Distribution permission for this pinned snapshot is recorded as confirmed by the publisher on 2026-10-08. The completed record is in [geomotion-distribution-record.md](docs/releases/geomotion-distribution-record.md). Copyright remains with the upstream authors; the original license record is retained in SOURCE.md.
 
 ## Wanderer-derived code and Track
 
-The AGPL-3.0-only full text is already provided by [LICENSE](LICENSE) and src/track/LICENSE. See [PROVENANCE.md](PROVENANCE.md) for the fixed Wanderer/VoyageTrack source and Track modifications. These texts are not duplicated here. They do not supply rights for the GeoMotion snapshot or replace the original notices of other third-party components.
+The AGPL-3.0-only full text is already provided by [LICENSE](LICENSE) and src/track/LICENSE. See [PROVENANCE.md](PROVENANCE.md) for the fixed Wanderer/VoyageTrack source and Track modifications. These texts are not duplicated here. Third-party components retain the original notices linked above.

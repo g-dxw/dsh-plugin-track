@@ -190,7 +190,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ## 地图镜头编辑集成本地原型（2026-10-04）
 
 - GeoMotion 的工程、动画求值、路线同步与文字合成核心固定于 `databandar/geomotion` 的 `a911219b1f0d704aa10f1fc915df65c21f612ec1`，保存在 `src/track/vendor/geomotion/`。只调整内部导入为相对路径；源文件与调整后 SHA-256 见该目录的 `source-manifest.json`，来源说明见 `SOURCE.md`。
-- 2026-10-04 本地原型集成时，上游没有声明许可证；当时仅用于用户已授权的本地验证，未发布软件包。该 GeoMotion 快照不属于本插件 AGPL 归属声明。
-- 2026-10-08 npm 发布时，发布者确认已取得 GeoMotion 分发权限，并明确要求发布。这是发布者的确认记录，未随快照附上书面授权条款。上游公开许可证仍未声明，本次发行继续保留原始版权和这份确认，不为 GeoMotion 新增或推断公开许可证。具体声明见 `src/track/vendor/geomotion/SOURCE.md` 与 `THIRD_PARTY_NOTICES.md`。
+- 发布者已于 2026-10-08 确认取得 GeoMotion 分发权限，日常发行沿用该确认；具体来源与分发说明见 [SOURCE.md](src/track/vendor/geomotion/SOURCE.md)。
 - `bjperson/maplibre-gl-video-export` 的 `cc358e34221ce95c6f7381d8d2a5c9fd0ac0a9ad`（BSD-3-Clause）提供镜头预设与逐帧输出的实现参考。未复制其完整控件、交通路线生成或全局 MapLibre 时钟控制；本插件模板直接生成 GeoMotion 相机关键帧，视频导出消费带地名、字幕及地图来源署名的合成 Canvas。
 - 实际依赖 `immer@10.1.1`（MIT）和 `mediabunny@1.24.2`（MPL-2.0）。编码器直接使用 Mediabunny `CanvasSource`、精确帧时间戳和背压；外部依赖的许可证依其随包文本，宿主 React 继续外置共享。
