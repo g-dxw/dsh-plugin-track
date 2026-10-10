@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "version": "0.1.3",
-  "baseCommit": "096cdb3cc82f69e6f9acf33a8b6ada6256702a17",
+  "version": "0.1.4",
+  "baseCommit": "5fe4cc527717786358e7b1b0e6ef88ec80db46df",
   "dirty": false,
   "sourceMeaning": "Exact source and build-input bytes packed from the committed release checkout. Generated package metadata, this snapshot and lib outputs are identified by the release archive checksum.",
   "files": [
@@ -18,7 +18,7 @@
     {
       "path": "BUILDING.md",
       "bytes": 2911,
-      "sha256": "5fe2a738ef7f1ac285e637c135864dfa7831bbfb2b7a24f6aabe3032f17cfb91"
+      "sha256": "2b1f9fc475aab01846325f1bbe36ed198e2f942ef9fc1688d153f6dd36109a52"
     },
     {
       "path": "LICENSE",
@@ -32,8 +32,8 @@
     },
     {
       "path": "README.md",
-      "bytes": 9850,
-      "sha256": "c349b8facb9d741f723cc7c41741fc57625bcfb2bbde42c868d2aacb86b27cdc"
+      "bytes": 10017,
+      "sha256": "913f418027271add7b82ca001c4ee6c71666cd019b03543c04964f7ccc15d769"
     },
     {
       "path": "THIRD_PARTY_NOTICES.md",
@@ -42,8 +42,8 @@
     },
     {
       "path": "build-inputs/yarn.lock",
-      "bytes": 102225,
-      "sha256": "590ee3334a471f5062208bd0c3a6eb4241ecda32e62d15fe911d27f1f1b8fd91"
+      "bytes": 102309,
+      "sha256": "16e744968224d7730441cd74694a31928cb72f8b661e84f5a15d9384e721fce7"
     },
     {
       "path": "cordis.patch.yml",
@@ -131,9 +131,14 @@
       "sha256": "c28d67e16f99d7e232f9cc6abe011164e6371c360aabdc28fcc8c3d260fac930"
     },
     {
+      "path": "docs/releases/track-0.1.4.md",
+      "bytes": 3521,
+      "sha256": "1889abf08e75bd7ef0b5843ce20679b78f7700f9d2d0c220f538e5c1c75b9f10"
+    },
+    {
       "path": "docs/releases/track-cqai-club-portal.json",
-      "bytes": 3766,
-      "sha256": "a60a6db32607987f200b4173bf79fb3403e943bcdc5915bc572b5584a3b84a55"
+      "bytes": 3772,
+      "sha256": "5669e37d93338a9cb78248b11080b0e7c697cf6c993ce76d6adb75a8871a97bf"
     },
     {
       "path": "docs/skill-drafts/travel-video-script/SKILL.md",
