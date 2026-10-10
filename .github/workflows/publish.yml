@@ -111,7 +111,7 @@ jobs:
 
       - name: Publish verified tarball with npm trusted publishing
         if: ${{ steps.registry.outputs.should_publish == 'true' && (github.event_name != 'workflow_dispatch' || inputs.authentication == 'oidc') }}
-        run: npm publish "artifacts/${PACKAGE_FILENAME}" --ignore-scripts --access public --tag "$EXPECTED_TAG" --provenance
+        run: npm publish "./artifacts/${PACKAGE_FILENAME}" --ignore-scripts --access public --tag "$EXPECTED_TAG" --provenance
 
       - name: Publish verified tarball with configured token fallback
         if: ${{ steps.registry.outputs.should_publish == 'true' && github.event_name == 'workflow_dispatch' && inputs.authentication == 'token' }}
@@ -122,4 +122,4 @@ jobs:
             echo 'NPM_TOKEN must be configured for the explicit token fallback.' >&2
             exit 1
           fi
-          npm publish "artifacts/${PACKAGE_FILENAME}" --ignore-scripts --access public --tag "$EXPECTED_TAG" --provenance
+          npm publish "./artifacts/${PACKAGE_FILENAME}" --ignore-scripts --access public --tag "$EXPECTED_TAG" --provenance
