@@ -40,9 +40,10 @@ afterAll(async () => {disposeOpenMontage(env); await new Promise(resolve => setT
 
 describe('OpenMontage local storage boundaries', () => {
   it('defaults to the explicit local checkout and validates settings without executing or installing anything', () => {
+    const settingsSource = nativeAvailable ? resolve(source) : join(base, 'settings-source-fixture')
     expect(readOpenMontageSettings(env)).toEqual({sourceDirectory: 'E:\\workspace\\project\\OpenMontage', pythonPath: 'python'})
-    for (const value of [{sourceDirectory: '../outside', pythonPath: 'python'}, {sourceDirectory: source, pythonPath: 'python\nextra'}, {sourceDirectory: source, pythonPath: 'python', token: 'ignored'}]) expect(() => writeOpenMontageSettings(value, env)).toThrow(OpenMontageError)
-    expect(writeOpenMontageSettings({sourceDirectory: source, pythonPath: python}, env).sourceDirectory).toBe(resolve(source))
+    for (const value of [{sourceDirectory: '../outside', pythonPath: 'python'}, {sourceDirectory: settingsSource, pythonPath: 'python\nextra'}, {sourceDirectory: settingsSource, pythonPath: 'python', token: 'ignored'}]) expect(() => writeOpenMontageSettings(value, env)).toThrow(OpenMontageError)
+    expect(writeOpenMontageSettings({sourceDirectory: settingsSource, pythonPath: python}, env).sourceDirectory).toBe(settingsSource)
     expect(listOpenMontageProjects(trackId, env)).toEqual([])
     expect(() => listOpenMontageProjects('../outside', env)).toThrow()
   })
