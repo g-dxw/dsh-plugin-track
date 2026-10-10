@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "version": "0.1.3",
-  "baseCommit": "4ee33606c2618bedb5efcd4cd2b5cd38c6d0e4e8",
+  "baseCommit": "096cdb3cc82f69e6f9acf33a8b6ada6256702a17",
   "dirty": false,
   "sourceMeaning": "Exact source and build-input bytes packed from the committed release checkout. Generated package metadata, this snapshot and lib outputs are identified by the release archive checksum.",
   "files": [
@@ -1932,8 +1932,8 @@
     },
     {
       "path": "tests/openmontage-backend.test.ts",
-      "bytes": 21344,
-      "sha256": "9b598b3ec1fbe07d837f4de5c012481a09a99f39ba2a23580b21e5f1735c27f7"
+      "bytes": 21468,
+      "sha256": "73a67d64c2e8d24f2514b37987391f30e07dcd002a8986c42c987e2358fb6e69"
     },
     {
       "path": "tests/openmontage-board-theme.test.ts",
