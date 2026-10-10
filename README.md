@@ -38,19 +38,21 @@
 
 ## 安装
 
-先安装支持插件的 **e宝工坊 Desktop**。本版依赖的 **DSH 接口包范围为 `^0.1.5-rc.1`**；采用 0.2.x 接口包的 Desktop 需要相应的兼容版本。Track 以独立插件提供，在插件管理中添加：
+先安装支持插件的 **e宝工坊 Desktop**。本版依赖的六项 **DSH 接口包范围为 `^0.1.5-rc.1 || ^0.2.0-rc.2`**，支持 DSH `0.2.0-rc.2`，并保留原 0.1.x 范围。Track 以独立插件提供，在插件管理中添加：
 
 ```text
-cqai-dsh-plugin-track@0.1.3
+cqai-dsh-plugin-track@0.1.4
 ```
 
 也可以使用 DSH 命令行：
 
 ```sh
-dsh plugin --profile desktop add cqai-dsh-plugin-track@0.1.3
+dsh plugin --profile desktop add cqai-dsh-plugin-track@0.1.4
 ```
 
-安装后重启应用，从侧栏 **轨迹** 进入。本版说明见 [0.1.3 发行记录](docs/releases/track-0.1.3.md)，后续版本见 [GitHub Releases](https://github.com/g-dxw/dsh-plugin-track/releases)。
+安装后重启应用，从侧栏 **轨迹** 进入。本版说明见 [0.1.4 发行记录](docs/releases/track-0.1.4.md)，后续版本见 [GitHub Releases](https://github.com/g-dxw/dsh-plugin-track/releases)。
+
+已发布的 `0.1.3` 仅声明 `^0.1.5-rc.1`，DSH `0.2.0-rc.2` 会因版本范围不匹配拒绝加载；请升级至 `0.1.4`。
 
 基础轨迹、地图与素材管理可以独立使用。AI 图片需宿主提供可用的生图服务；左侧 Agent 需支持项目会话的 Desktop。OpenMontage 策划另外需要本机源码、Python 环境及用于视频回填的 FFprobe，配置方法见 [接入说明](docs/track-openmontage.md)。
 
@@ -141,7 +143,7 @@ dsh plugin --profile desktop add .
 | [Agent 图片引用](docs/track-image-agent-references.md) | 图片副本、引用与添加到对话草稿。 |
 | [AI 图片创作验收](docs/track-ai-image-workspace-validation-v2.md) | 多图输入、历史恢复及验证范围。 |
 | [武功山位置镜头示例](examples/wugongshan-location-preview/README.md) | 可复用、可编辑的真实路线与山体镜头。 |
-| [0.1.3 发行说明](docs/releases/track-0.1.3.md) | 本版发行调整与验证记录。 |
+| [0.1.4 发行说明](docs/releases/track-0.1.4.md) | DSH 0.2.0-rc.2 兼容调整及验证记录。 |
 
 ## 贡献
 

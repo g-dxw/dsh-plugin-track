@@ -30,7 +30,7 @@ CI 上传 tgz、npm-pack.json、SHA256SUMS 和 package-verification.json。verif
 ~~~powershell
 node scripts/generate-source-snapshot.mjs
 npm pack --ignore-scripts --json --pack-destination outputs
-node scripts/verify-package.mjs outputs/cqai-dsh-plugin-track-0.1.3.tgz
+node scripts/verify-package.mjs outputs/cqai-dsh-plugin-track-0.1.4.tgz
 ~~~
 
 package.json、SOURCE-SNAPSHOT.json 及 lib/ 为清单中的派生或自引用项，由 tgz 的整体 SHA-256、SHA-512 integrity 和 npm provenance 标识。CI 生成的包以 Actions 下载的校验报告为准。

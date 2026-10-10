@@ -181,15 +181,15 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@deepseek-ai/cordis@npm:^4.0.2":
-  version: 4.0.2
-  resolution: "@deepseek-ai/cordis@npm:4.0.2"
+"@deepseek-ai/cordis@npm:4.0.4":
+  version: 4.0.4
+  resolution: "@deepseek-ai/cordis@npm:4.0.4"
   dependencies:
-    "@deepseek-ai/cosmokit": "npm:^1.8.3"
+    "@deepseek-ai/cosmokit": "npm:~1.8.5"
     "@standard-schema/spec": "npm:^1.1.0"
   peerDependencies:
-    "@deepseek-ai/cordis-plugin-include": ^1.0.7
-    "@deepseek-ai/cordis-plugin-loader": ^1.0.3
+    "@deepseek-ai/cordis-plugin-include": ~1.0.9
+    "@deepseek-ai/cordis-plugin-loader": ~1.0.5
   peerDependenciesMeta:
     "@deepseek-ai/cordis-plugin-include":
       optional: true
@@ -197,82 +197,82 @@ __metadata:
       optional: true
   bin:
     cordis: bin.js
-  checksum: 10c0/62b7a84f591ecf7399651e577b68c7f0336e1ffa94692b202bac7994604fabe818db53660c4945a6da692bf8ce0ec43d09c07222b7b5c3ce5a1b5993e4708c50
+  checksum: 10c0/4e03fb0eda8700c137038f6876421700a68e07d6fbaa31883ca895748ae564bfd6062e871dcec060d0db1a517be65db328aa6e52603e5e77248136afb922eb58
   languageName: node
   linkType: hard
 
-"@deepseek-ai/cosmokit@npm:^1.8.3":
-  version: 1.8.3
-  resolution: "@deepseek-ai/cosmokit@npm:1.8.3"
-  checksum: 10c0/fb84c4560d6563ce0d1103489689478f109d0634a9d5393b6eb1a411ac5679c3b8c30e3182325b8385316a53116204a613e214b5f6da4b8c645d871739eb02d0
+"@deepseek-ai/cosmokit@npm:~1.8.5":
+  version: 1.8.5
+  resolution: "@deepseek-ai/cosmokit@npm:1.8.5"
+  checksum: 10c0/b7c8c2f1b6c08e3e6ce3bc0804d77ef43035229811afb89a43a680e0c198ed93cd0f2bb1cfbf30c8626ac839e1eaf58f655a31c577c69cd7b0bf3237278e156e
   languageName: node
   linkType: hard
 
-"@deepseek-ai/dsh-client-ui-layout@npm:^0.1.5-rc.1":
-  version: 0.1.5-rc.3
-  resolution: "@deepseek-ai/dsh-client-ui-layout@npm:0.1.5-rc.3"
+"@deepseek-ai/dsh-client-ui-layout@npm:0.2.0-rc.2":
+  version: 0.2.0-rc.2
+  resolution: "@deepseek-ai/dsh-client-ui-layout@npm:0.2.0-rc.2"
   peerDependencies:
-    "@deepseek-ai/cordis": 4.0.2
-  checksum: 10c0/5a1a071156f2921eb0ce9beeaa95377224ec5bb025ff607268855aac2b59c7f38d91a89fa043ff166d450c8c5703517ccea6c2937e61d47b644690734d345df9
+    "@deepseek-ai/cordis": ~4.0.4
+  checksum: 10c0/a19768fc5710bc3dc266f33adb15b5a694807e5f336100aea5d6d0d9f6213c1628bcb7f2316dd56888cf6559a094f2d6383afb716a1a8619a60329c4bc804b08
   languageName: node
   linkType: hard
 
-"@deepseek-ai/dsh-client-ui-renderer@npm:^0.1.5-rc.1":
-  version: 0.1.5-rc.3
-  resolution: "@deepseek-ai/dsh-client-ui-renderer@npm:0.1.5-rc.3"
+"@deepseek-ai/dsh-client-ui-renderer@npm:0.2.0-rc.2":
+  version: 0.2.0-rc.2
+  resolution: "@deepseek-ai/dsh-client-ui-renderer@npm:0.2.0-rc.2"
   peerDependencies:
-    "@deepseek-ai/cordis": 4.0.2
-  checksum: 10c0/c8d9728713ca3cdbebd450d1ec5d811f1de9d69626283d3350e35b03a5aa8952a48dade0b7d4efeaafb6a447834f4b5f028ecaa7aebf850582bf46603c9dc1f4
+    "@deepseek-ai/cordis": ~4.0.4
+  checksum: 10c0/74a2fefdfcf67b3c61831ef2cc53cce8d94cd336e7385d950895ccbc79622b85c6e347bfee85f948d90571db344556da4744ccdf006e759e4893b75eb3922349
   languageName: node
   linkType: hard
 
-"@deepseek-ai/dsh-client-ui-sidebar@npm:^0.1.5-rc.1":
-  version: 0.1.5-rc.3
-  resolution: "@deepseek-ai/dsh-client-ui-sidebar@npm:0.1.5-rc.3"
+"@deepseek-ai/dsh-client-ui-sidebar@npm:0.2.0-rc.2":
+  version: 0.2.0-rc.2
+  resolution: "@deepseek-ai/dsh-client-ui-sidebar@npm:0.2.0-rc.2"
   peerDependencies:
-    "@deepseek-ai/cordis": 4.0.2
-  checksum: 10c0/52d82b9c420225a1efed887eb54abcda43f18e5f5da3fffd9e58bf847d95159932d933528b0cf374cc560f33dee82609b51893ee8654d2a9055bebe71b3b5c77
+    "@deepseek-ai/cordis": ~4.0.4
+  checksum: 10c0/3a1230588c9aafc3beb4b1daa2606daca4fc8b0b9184c24dde2d3431062604605042b1cd2ce2df8fa13dcebc495a08429de83dfd86c282955a6b8edb787ed065
   languageName: node
   linkType: hard
 
-"@deepseek-ai/dsh-client-ui-slots@npm:^0.1.5-rc.1":
-  version: 0.1.5-rc.3
-  resolution: "@deepseek-ai/dsh-client-ui-slots@npm:0.1.5-rc.3"
+"@deepseek-ai/dsh-client-ui-slots@npm:0.2.0-rc.2":
+  version: 0.2.0-rc.2
+  resolution: "@deepseek-ai/dsh-client-ui-slots@npm:0.2.0-rc.2"
   peerDependencies:
-    "@deepseek-ai/cordis": 4.0.2
-  checksum: 10c0/6695761ab553ec58dbf9e8a5c5a372bd0b1f7466e85884ee4784aecf9207dd0097f2b143edf4e2c118f71c9fb78f47b23ebe8e056f1c91a1a133624973b4a038
+    "@deepseek-ai/cordis": ~4.0.4
+  checksum: 10c0/a3c224a7617fe6ed094cfeb35c65b36b3d831275c6450bf22626f4e9385c5b53eedcae89512c38b4f0c9308e63d3e36114fefc61e51d57b36a34e1a0b360af13
   languageName: node
   linkType: hard
 
-"@deepseek-ai/dsh-home-paths@npm:^0.1.5-rc.1":
-  version: 0.1.5-rc.3
-  resolution: "@deepseek-ai/dsh-home-paths@npm:0.1.5-rc.3"
+"@deepseek-ai/dsh-home-paths@npm:0.2.0-rc.2":
+  version: 0.2.0-rc.2
+  resolution: "@deepseek-ai/dsh-home-paths@npm:0.2.0-rc.2"
   peerDependencies:
-    "@deepseek-ai/cordis": 4.0.2
-  checksum: 10c0/03a9dc51c72ad8e54e733bd75ba712f5cdef9eee2270aad71bbe671d75e0cd65ee3f12b216f24bccce3ff1ab45d968ec74c566821068aade4dfc5271e62d5049
+    "@deepseek-ai/cordis": ~4.0.4
+  checksum: 10c0/7499cc1b591bd6cca831385403272f7ccaea7f4be04fbc5bb957224098616df7c926267cc119848a92cdf6048dd8e623b2baa092d28f0dd3655951079862a668
   languageName: node
   linkType: hard
 
-"@deepseek-ai/dsh-host-webserver@npm:^0.1.5-rc.1":
-  version: 0.1.5-rc.3
-  resolution: "@deepseek-ai/dsh-host-webserver@npm:0.1.5-rc.3"
+"@deepseek-ai/dsh-host-webserver@npm:0.2.0-rc.2":
+  version: 0.2.0-rc.2
+  resolution: "@deepseek-ai/dsh-host-webserver@npm:0.2.0-rc.2"
   dependencies:
-    "@deepseek-ai/schemastery": "npm:3.18.2"
+    "@deepseek-ai/schemastery": "npm:~3.18.4"
     compression: "npm:^1.8.1"
     negotiator: "npm:^1.0.0"
   peerDependencies:
-    "@deepseek-ai/cordis": 4.0.2
-  checksum: 10c0/7d98548b6ede749aef496933792ad11ba46848cb655e0b7bc4b2cd5d650157baf6e8d220a7cb41d000d030f9e1457cd4f775f7b4045e25b940f70064a6076aeb
+    "@deepseek-ai/cordis": ~4.0.4
+  checksum: 10c0/94c7cb7709bb127bbbe592e46a5466620c1bd3f1c3bf2a92a7264b10012da7f86886824b3af3bde5c48243e4dda77bc57d6314f182358f39c65a110081d9dd52
   languageName: node
   linkType: hard
 
-"@deepseek-ai/schemastery@npm:3.18.2":
-  version: 3.18.2
-  resolution: "@deepseek-ai/schemastery@npm:3.18.2"
+"@deepseek-ai/schemastery@npm:~3.18.4":
+  version: 3.18.4
+  resolution: "@deepseek-ai/schemastery@npm:3.18.4"
   dependencies:
-    "@deepseek-ai/cosmokit": "npm:^1.8.3"
+    "@deepseek-ai/cosmokit": "npm:~1.8.5"
     "@standard-schema/spec": "npm:^1.1.0"
-  checksum: 10c0/699651803c2cec6512ec648c31e0b4fcf07451b0adbf7c6bfb8462b6fa84f97584372b00a31ec8f1248c283f8e91819aa143432c28271347de5568ef9ea46421
+  checksum: 10c0/eb2afd90404460ea88a510f20bc6751a70f9e9973bac9342279999277928fc827c2aba1bbb37f134a92b6475e261e5dd97c1ddbc6f0ca8588d07d34303ec4a1d
   languageName: node
   linkType: hard
 
@@ -1360,13 +1360,13 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "cqai-dsh-plugin-track@workspace:."
   dependencies:
-    "@deepseek-ai/cordis": "npm:^4.0.2"
-    "@deepseek-ai/dsh-client-ui-layout": "npm:^0.1.5-rc.1"
-    "@deepseek-ai/dsh-client-ui-renderer": "npm:^0.1.5-rc.1"
-    "@deepseek-ai/dsh-client-ui-sidebar": "npm:^0.1.5-rc.1"
-    "@deepseek-ai/dsh-client-ui-slots": "npm:^0.1.5-rc.1"
-    "@deepseek-ai/dsh-home-paths": "npm:^0.1.5-rc.1"
-    "@deepseek-ai/dsh-host-webserver": "npm:^0.1.5-rc.1"
+    "@deepseek-ai/cordis": "npm:4.0.4"
+    "@deepseek-ai/dsh-client-ui-layout": "npm:0.2.0-rc.2"
+    "@deepseek-ai/dsh-client-ui-renderer": "npm:0.2.0-rc.2"
+    "@deepseek-ai/dsh-client-ui-sidebar": "npm:0.2.0-rc.2"
+    "@deepseek-ai/dsh-client-ui-slots": "npm:0.2.0-rc.2"
+    "@deepseek-ai/dsh-home-paths": "npm:0.2.0-rc.2"
+    "@deepseek-ai/dsh-host-webserver": "npm:0.2.0-rc.2"
     "@panzoom/panzoom": "npm:4.6.2"
     "@types/geojson": "npm:^7946.0.16"
     "@types/node": "npm:^22.20.0"
@@ -1390,12 +1390,12 @@ __metadata:
     vitest: "npm:4.1.8"
   peerDependencies:
     "@deepseek-ai/cordis": ^4.0.2
-    "@deepseek-ai/dsh-client-ui-layout": ^0.1.5-rc.1
-    "@deepseek-ai/dsh-client-ui-renderer": ^0.1.5-rc.1
-    "@deepseek-ai/dsh-client-ui-sidebar": ^0.1.5-rc.1
-    "@deepseek-ai/dsh-client-ui-slots": ^0.1.5-rc.1
-    "@deepseek-ai/dsh-home-paths": ^0.1.5-rc.1
-    "@deepseek-ai/dsh-host-webserver": ^0.1.5-rc.1
+    "@deepseek-ai/dsh-client-ui-layout": ^0.1.5-rc.1 || ^0.2.0-rc.2
+    "@deepseek-ai/dsh-client-ui-renderer": ^0.1.5-rc.1 || ^0.2.0-rc.2
+    "@deepseek-ai/dsh-client-ui-sidebar": ^0.1.5-rc.1 || ^0.2.0-rc.2
+    "@deepseek-ai/dsh-client-ui-slots": ^0.1.5-rc.1 || ^0.2.0-rc.2
+    "@deepseek-ai/dsh-home-paths": ^0.1.5-rc.1 || ^0.2.0-rc.2
+    "@deepseek-ai/dsh-host-webserver": ^0.1.5-rc.1 || ^0.2.0-rc.2
     react: ^18.3.1
   languageName: unknown
   linkType: soft
