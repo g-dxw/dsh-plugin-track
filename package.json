@@ -1,6 +1,6 @@
 {
   "name": "cqai-dsh-plugin-track",
-  "version": "0.1.0-beta.3",
+  "version": "0.1.3",
   "description": "轨迹：二维与 3D 沙盘、卫星底图、分析编辑、SVG 标注和 AI 动画美化",
   "license": "AGPL-3.0-only",
   "type": "module",
@@ -58,7 +58,8 @@
   "scripts": {
     "build": "tsdown && node scripts/verify-client-bundle.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:release": "node --test scripts/release-package-utils.test.mjs"
   },
   "dependencies": {
     "@panzoom/panzoom": "4.6.2",
@@ -112,12 +113,12 @@
   },
   "publishConfig": {
     "registry": "https://registry.npmjs.org/",
-    "tag": "beta",
+    "tag": "latest",
     "access": "public"
   },
   "trackSource": {
-    "baseCommit": "91677b21307aa1fa8839412e60cf1da7690e7695",
+    "baseCommit": "096cdb3cc82f69e6f9acf33a8b6ada6256702a17",
     "dirty": false,
-    "sourceSnapshotSha256": "be8c768c876a6dfb1cf8b8cad210f98164c0f01e1cab16e6cb9ea1f9eae8e13d"
+    "sourceSnapshotSha256": "b14921b814ab000ab230f4c0c4bbf5c5581ed11d182f100d7e5c2152e4f3b496"
   }
 }
