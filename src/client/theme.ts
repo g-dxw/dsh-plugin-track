@@ -1,4 +1,4 @@
-/** Bridge the host's theme settings; the plugin keeps no independent UI theme. */
+/** GeoMotion chrome follows the host theme; Track has no separate theme switch. */
 export const TRACK_THEME_CSS = `
 .trk{
  --trk-bg:var(--dsw-alias-bg-base,var(--background,Canvas));
@@ -23,15 +23,26 @@ export const TRACK_THEME_CSS = `
  --trk-overlay-text:var(--trk-text);
  --trk-map-background:var(--dsw-alias-bg-layer-2,var(--trk-bg));
  --trk-shadow:var(--dsw-alias-bg-mask-2,color-mix(in srgb,var(--trk-text) 12%,transparent));
- --trk-radius-sm:var(--dsw-radius-sm,8px);
- --trk-radius-md:var(--dsw-radius-md,12px);
- --trk-radius-lg:var(--dsw-radius-lg,16px);
+ --trk-radius-sm:5px;
+ --trk-radius-md:6px;
+ --trk-radius-lg:8px;
+ --trk-control-height:32px;
+ --trk-input-height:30px;
+ --trk-ui-font-size:calc(var(--trk-font-size)*.92857);
+ --trk-ui-label-size:calc(var(--trk-font-size)*.85714);
+ --trk-panel-title-height:36px;
  --trk-font-size:var(--dsh-content-font-size,14px);
  --trk-chart-label:var(--trk-muted);
  --trk-chart-grid:var(--trk-border);
  --trk-chart-crosshair:var(--trk-muted);
  font-size:var(--trk-font-size);color-scheme:inherit;
 }
+.trk input[type=checkbox],.trk input[type=radio],.trk input[type=range],.trk progress{accent-color:var(--trk-accent)}
+.trk .trk-secondary,.trk .trk-primary,.trk .trk-danger{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:var(--trk-control-height);padding:5px 9px;border-radius:var(--trk-radius-sm);font-size:var(--trk-ui-label-size);line-height:1.5;box-shadow:none}
+.trk input:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=color]):not([type=file]),.trk select{min-height:var(--trk-input-height);font-size:var(--trk-ui-label-size)}
+.trk textarea{font-size:var(--trk-ui-font-size);line-height:1.6}
+@container(max-width:750px){.trk .trk-secondary,.trk .trk-primary,.trk .trk-danger{min-height:44px}.trk input:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=color]):not([type=file]),.trk select{min-height:40px}}
+@media(pointer:coarse){.trk{--trk-control-height:44px;--trk-input-height:40px}}
 .trk button:focus-visible,.trk input:focus-visible,.trk select:focus-visible,.trk textarea:focus-visible,.trk a:focus-visible,.trk summary:focus-visible{outline:2px solid var(--trk-focus);outline-offset:2px}
 @media(forced-colors:active){.trk{
  --trk-bg:Canvas;--trk-text:CanvasText;--trk-muted:CanvasText;--trk-surface:Canvas;

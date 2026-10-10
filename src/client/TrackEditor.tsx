@@ -9,7 +9,7 @@ import {
 import { editedTrackInput } from '../track/gpx-export.ts'
 import { formatDistance, formatElevation } from '../track/format.ts'
 import { EditorMap, type EditorTool } from './EditorMap.tsx'
-import { TrackPlacemarkEditor } from './TrackOverview.tsx'
+import { TrackPlacemarkEditor, type PlacemarkEditorState } from './TrackOverview.tsx'
 import { TrackArt, type TrackArtState } from './TrackArt.tsx'
 import { createPlacemarkHistory } from './placemark-history.ts'
 import { editorHistoryShortcut, shortcutInsideEditor } from './editor-shortcuts.ts'
@@ -22,6 +22,7 @@ export interface TrackEditorProps {
   loadTrack: (id: string) => Promise<TrackRecord>
   onSave: (inputs: readonly TrackInput[], options?: {keepEditing?: boolean}) => Promise<void>
   onCancel: () => void
+  onPlacemarksSaved?: () => void
 }
 
 type Snapshot = {parts: EditPart[]; activePartId: string}
@@ -68,6 +69,11 @@ export function TrackEditor(props: TrackEditorProps) {
   const [artState, setArtState] = useState<TrackArtState>({dirty: false, busy: false})
   const modeRef = useRef(mode); modeRef.current = mode
   const [placemarkBusy, setPlacemarkBusy] = useState(false)
+  const [pointState, setPointState] = useState<PlacemarkEditorState>({dirty:false,ready:false,save:async()=>false})
+  const [savingPoints, setSavingPoints] = useState(false)
+  const [pointNote, setPointNote] = useState('')
+  const [pointSaveError, setPointSaveError] = useState('')
+  const pointSaveLock = useRef(false)
   const [history, setHistory] = useState<History>(() => ({present: initialDraft(props.initial), past: [], future: []}))
   const historyRef = useRef(history)
   const baseline = useRef(history.present.parts)
@@ -87,12 +93,13 @@ export function TrackEditor(props: TrackEditorProps) {
   const [error, setError] = useState('')
   const [note, setNote] = useState('')
   const [confirmDiscard, setConfirmDiscard] = useState(false)
-  const busy = saving || loadingTrack || placemarkBusy || artState.busy
+  const busy = saving || savingPoints || loadingTrack || placemarkBusy || artState.busy
   const selectedIndex = selected.length ? selected[selected.length - 1] : null
   const point = selectedIndex === null ? undefined : active.points[selectedIndex]
   const metrics = useMemo(() => editedMetrics(active.points), [active.points])
   const dirty = history.present.parts !== baseline.current || nameInput.trim() !== active.name
-  const hasDraft = dirty || artState.dirty
+  const hasDraft = dirty || artState.dirty || pointState.dirty
+  useEffect(()=>{if(pointState.dirty)setPointNote('')},[pointState.dirty])
   useEffect(() => {
     if (!hasDraft) return
     const warn = (event: BeforeUnloadEvent) => {event.preventDefault(); event.returnValue = ''}
@@ -291,7 +298,7 @@ export function TrackEditor(props: TrackEditorProps) {
         return input
       })
       if (byteLength(JSON.stringify({tracks: inputs})) > UPLOADS.maxRequestBytes) throw new Error('保存内容超过 24 MB，请先减少轨迹点或分批编辑。')
-      if (artState.dirty) await props.onSave(inputs, {keepEditing: true})
+      if (artState.dirty || pointState.dirty) await props.onSave(inputs, {keepEditing: true})
       else await props.onSave(inputs)
       if (alive.current) {
         baseline.current = draft.parts
@@ -309,6 +316,21 @@ export function TrackEditor(props: TrackEditorProps) {
     if (hasDraft) setConfirmDiscard(true)
     else props.onCancel()
   }
+  async function savePoints() {
+    if(busy||pointSaveLock.current||!pointState.dirty||!pointState.ready)return
+    pointSaveLock.current=true;setSavingPoints(true);setPointNote('');setPointSaveError('');setConfirmDiscard(false)
+    try {
+      if(await pointState.save()) {
+        props.onPlacemarksSaved?.()
+        if(alive.current)setPointNote('标注点修改已保存。')
+      }
+    } catch(reason) {
+      if(alive.current)setPointSaveError('保存失败，草稿已保留：'+(reason instanceof Error?reason.message:String(reason)))
+    } finally {
+      pointSaveLock.current=false
+      if(alive.current)setSavingPoints(false)
+    }
+  }
 
   const canSplit = selectedIndex !== null && selectedIndex > 0 && selectedIndex < active.points.length - 1
   const canConnect = selected.length === 2
@@ -323,17 +345,13 @@ export function TrackEditor(props: TrackEditorProps) {
   return <section ref={editor} className="trk-editor" aria-label="轨迹编辑器">
     <style>{EDITOR_CSS}</style>
     <header className="trk-editor-head">
-      <div><h2>{props.initial ? '编辑轨迹' : '新建轨迹'}</h2><p>{mode === 'points' ? '调整标注点顺序、照片关联与位置。修改自动保存到当前轨迹。' : mode === 'art' ? '点位信息在「标注点编辑」中修改；SVG 用于调整样式、排版位置和图片布局。' : '手动修线、拆分和合并。保存为新的 GPX 副本，原轨迹保留。'}</p></div>
-      <div className="trk-editor-actions">
-        {mode === 'line' && <><button type="button" disabled={busy || !history.past.length} aria-keyshortcuts="Control+z Meta+z" title="撤销（Ctrl+Z）" onClick={undo}>撤销</button>
-        <button type="button" disabled={busy || !history.future.length} aria-keyshortcuts="Control+Shift+z Meta+Shift+z Control+y" title="重做（Ctrl+Shift+Z / Ctrl+Y）" onClick={redo}>重做</button></>}
-        <button type="button" disabled={busy} onClick={cancel}>{mode !== 'line' ? (placemarkBusy ? '正在处理点位…' : artState.busy ? '正在处理画布…' : '返回轨迹') : '取消编辑'}</button>
-        {mode === 'line' && <button type="button" className="trk-editor-save" disabled={busy} onClick={() => void save()}>{saving ? '正在保存…' : '保存全部为 GPX 副本'}</button>}
-      </div>
+      <div><h2>{props.initial ? '编辑轨迹' : '新建轨迹'}</h2><p>{mode === 'points' ? '调整标注点、分组和照片。修改可实时预览，点击保存后生效。' : mode === 'art' ? '点位信息在「标注点编辑」中修改；SVG 用于调整样式、排版位置和图片布局。' : '手动修线、拆分和合并。保存为新的 GPX 副本，原轨迹保留。'}</p></div>
     </header>
+    <div className="trk-editor-topbar">
     {props.initial && <div className="trk-editor-tabs" role="tablist" aria-label="编辑内容">
       {EDIT_MODES.map(({id: value, label}) => <button key={value} type="button" role="tab" id={`trk-edit-${value}-tab`} data-edit-mode={value}
         aria-selected={mode === value} aria-controls={`trk-edit-${value}-panel`} tabIndex={mode === value ? 0 : -1} disabled={busy}
+        title={(value==='points'?pointState.dirty:value==='art'?artState.dirty:dirty)?'有未保存的修改':undefined}
         onClick={() => changeMode(value)} onKeyDown={event => {
           if (!['ArrowLeft','ArrowRight','Home','End'].includes(event.key) || busy) return
           event.preventDefault()
@@ -341,8 +359,18 @@ export function TrackEditor(props: TrackEditorProps) {
           const next = event.key === 'Home' ? EDIT_MODES[0].id : event.key === 'End' ? EDIT_MODES.at(-1)!.id
             : EDIT_MODES[(index + (event.key === 'ArrowRight' ? 1 : -1) + EDIT_MODES.length) % EDIT_MODES.length].id
           changeMode(next); event.currentTarget.parentElement?.querySelector<HTMLButtonElement>(`[data-edit-mode="${next}"]`)?.focus()
-        }}>{label}</button>)}
+        }}>{label}{(value==='points'?pointState.dirty:value==='art'?artState.dirty:dirty)&&<svg className="trk-editor-draft-dot" viewBox="0 0 8 8" width="8" height="8" aria-hidden="true"><circle cx="4" cy="4" r="3" fill="currentColor"/></svg>}</button>)}
     </div>}
+      <div className="trk-editor-actions">
+        {mode === 'line' && <><button type="button" disabled={busy || !history.past.length} aria-keyshortcuts="Control+z Meta+z" title="撤销（Ctrl+Z）" onClick={undo}>撤销</button>
+        <button type="button" disabled={busy || !history.future.length} aria-keyshortcuts="Control+Shift+z Meta+Shift+z Control+y" title="重做（Ctrl+Shift+Z / Ctrl+Y）" onClick={redo}>重做</button></>}
+        <button type="button" disabled={busy} onClick={cancel}>{mode !== 'line' ? (placemarkBusy||savingPoints ? '正在处理点位…' : artState.busy ? '正在处理画布…' : '返回轨迹') : '取消编辑'}</button>
+        {mode==='points'&&<button type="button" className="trk-editor-save" disabled={busy||!pointState.ready||!pointState.dirty} onClick={()=>void savePoints()}>{savingPoints?'正在保存…':'保存标注点修改'}</button>}
+        {mode === 'line' && <button type="button" className="trk-editor-save" disabled={busy} onClick={() => void save()}>{saving ? '正在保存…' : '保存全部为 GPX 副本'}</button>}
+      </div>
+    </div>
+    {mode==='points'&&<div className="trk-editor-draft-status" role="status">{pointState.dirty?'有未保存的标注点修改 · 切换 Tab 会保留草稿':pointNote||'标注点修改将在保存后生效'}</div>}
+    {mode==='points'&&pointSaveError&&<div className="trk-editor-error" role="alert">{pointSaveError}</div>}
     {mode === 'line' && error && <div className="trk-editor-error" role="alert">{error}</div>}
     {mode === 'line' && note && <div className="trk-editor-note" role="status">{note}</div>}
     {confirmDiscard && <div className="trk-editor-discard" role="alert">
@@ -350,8 +378,8 @@ export function TrackEditor(props: TrackEditorProps) {
       <button type="button" disabled={busy} onClick={() => props.onCancel()}>放弃修改</button>
       <button type="button" disabled={busy} onClick={() => setConfirmDiscard(false)}>继续编辑</button>
     </div>}
-    {mode === 'points' && props.initial && <div role="tabpanel" id="trk-edit-points-panel" aria-labelledby="trk-edit-points-tab">
-      <TrackPlacemarkEditor track={props.initial} basemap={props.basemap} onBasemap={props.onBasemap} onBusyChange={setPlacemarkBusy} history={placemarkHistory}/>
+    {props.initial && <div role="tabpanel" id="trk-edit-points-panel" aria-labelledby="trk-edit-points-tab" hidden={mode!=='points'}>
+      <TrackPlacemarkEditor track={props.initial} basemap={props.basemap} onBasemap={props.onBasemap} onBusyChange={setPlacemarkBusy} history={placemarkHistory} deferSave active={mode==='points'} onDraftStateChange={setPointState}/>
     </div>}
     {artVisited && props.initial && <div role="tabpanel" id="trk-edit-art-panel" aria-labelledby="trk-edit-art-tab" hidden={mode !== 'art'}>
       <TrackArt key={props.initial.id} track={props.initial} basemap={props.basemap} onBasemap={props.onBasemap} onCancel={cancel}
@@ -418,11 +446,16 @@ export function TrackEditor(props: TrackEditorProps) {
 
 const EDITOR_CSS = `
 .trk-editor .trk-profile-marker{border:2px solid white;border-radius:50%;background:#c83532;color:white;font:700 11px/1 system-ui,sans-serif}.trk-editor .trk-profile-marker-group{border-radius:14px;padding:0 4px;font-size:10px}.trk-editor .trk-profile-marker:hover:not(:disabled){background:#c83532}.trk-editor .trk-profile-marker-selected,.trk-editor .trk-profile-marker-selected:hover:not(:disabled){background:#98221f}
-.trk-editor-tabs{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px}.trk-editor-tabs button[aria-selected=true]{border-color:var(--trk-accent);background:var(--trk-active)}.trk-editor .trk-map-placemark{min-height:32px;padding:0;border:0;border-radius:50%;background:transparent}.trk-editor .trk-map-placemark:hover:not(:disabled){background:transparent}.trk-editor .trk-profile-marker{min-height:26px;padding:0}.trk-editor .trk-overview-point{border:1px solid transparent;min-height:82px;padding:9px}.trk-editor .trk-overview-point[aria-pressed=true]{border-color:var(--trk-border)}.trk-editor .trk-overview-photo-choice{min-height:62px;padding:2px}
-.trk-editor [role=tabpanel][hidden]{display:none}.trk-editor{color:var(--trk-text);font:inherit}.trk-editor *{box-sizing:border-box}.trk-editor h2{margin:0 0 8px;font-size:calc(var(--trk-font-size)*1.5714)}.trk-editor h3{margin:0 0 12px;font-size:calc(var(--trk-font-size)*1.0714)}.trk-editor :where(.trk-editor-head p,.trk-editor-body > p,.trk-editor-parts > p,.trk-editor-points > p){font-size:calc(var(--trk-font-size)*0.9286);line-height:1.7;margin:8px 0;color:var(--trk-muted)}.trk-editor button,.trk-editor input,.trk-editor select{font:inherit;font-size:calc(var(--trk-font-size)*0.9286);min-height:44px;border:1px solid var(--trk-border);border-radius:var(--trk-radius-sm);color:var(--trk-text);background:var(--trk-surface);padding:9px 12px}.trk-editor button{cursor:pointer}.trk-editor button:hover:not(:disabled){background:var(--trk-hover)}.trk-editor button:disabled{opacity:.45;cursor:not-allowed}.trk-editor button:focus-visible,.trk-editor input:focus-visible,.trk-editor select:focus-visible{outline:2px solid var(--trk-focus);outline-offset:2px}.trk-editor button[aria-pressed=true],.trk-editor button[aria-selected=true]{border-color:var(--trk-accent);background:var(--trk-active)}.trk-editor label{display:flex;flex-direction:column;gap:6px;font-size:calc(var(--trk-font-size)*0.8571);margin:12px 0}.trk-editor input,.trk-editor select{width:100%;min-width:0;background:var(--trk-bg)}.trk-editor option{background:var(--trk-bg)}.trk-editor-head{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;margin-bottom:16px}.trk-editor-actions,.trk-editor-tools{display:flex;gap:8px;flex-wrap:wrap}.trk-editor .trk-editor-save:hover:not(:disabled){background:var(--trk-primary-bg);color:var(--trk-on-accent)}.trk-editor .trk-editor-save{background:var(--trk-primary-bg);color:var(--trk-on-accent);border-color:var(--trk-accent);font-weight:650}.trk-editor-body{padding:0;border:0;margin:0;min-width:0}.trk-editor-instruction{min-height:22px}.trk-editor-grid{display:grid;grid-template-columns:minmax(220px,.7fr) minmax(300px,1.3fr);gap:18px;margin-top:18px}.trk-editor-parts,.trk-editor-points{background:var(--trk-surface);border:1px solid var(--trk-border);border-radius:var(--trk-radius-md);padding:14px;min-width:0}.trk-editor-part{display:flex;gap:6px;margin:6px 0;align-items:stretch}.trk-editor-part>button[role=tab]{flex:1;min-width:0;overflow-wrap:anywhere;text-align:left}.trk-editor-part small{display:block;color:var(--trk-muted);margin-top:4px}.trk-editor-part>button:not([role=tab]){width:44px;flex-shrink:0;padding:8px}.trk-editor-parts>button{width:100%}.trk-editor-position{display:flex;gap:8px;align-items:flex-end}.trk-editor-position label{margin:0;flex:1;min-width:70px}.trk-editor-position>button{flex-shrink:0}.trk-editor-coordinates{display:grid;grid-template-columns:1fr 1fr auto;gap:8px;align-items:flex-end;margin-bottom:12px}.trk-editor-coordinates label{margin:0}.trk-editor-error,.trk-editor-note,.trk-editor-discard{font-size:calc(var(--trk-font-size)*0.9286);line-height:1.7;padding:12px;border-radius:var(--trk-radius-md);margin-bottom:12px;border:1px solid var(--trk-danger-border);background:var(--trk-danger-bg);color:var(--trk-danger);white-space:pre-wrap}.trk-editor-note{background:var(--trk-notice-bg);border-color:var(--trk-notice-border);color:var(--trk-notice)}.trk-editor-discard{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.trk-editor-discard span{flex:1;min-width:220px}.trk-editor .trk-editor-validation{color:var(--trk-danger)}.trk-editor-body:disabled .trk-edit-map{pointer-events:none}
+.trk-editor-tabs{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px}.trk-editor-tabs button[aria-selected=true]{border-color:var(--trk-accent);background:var(--trk-active)}.trk-editor .trk-map-placemark{min-height:32px;padding:0;border:0;border-radius:50%;background:transparent}.trk-editor .trk-map-placemark:hover:not(:disabled){background:transparent}.trk-editor .trk-profile-marker{min-height:26px;padding:0}.trk-editor .trk-overview-point{border:0;border-left:2px solid transparent;min-height:48px;padding:4px 8px}.trk-editor .trk-overview-point[aria-pressed=true]{border-color:var(--trk-border)}.trk-editor .trk-overview-photo-choice{min-height:62px;padding:2px}
+.trk-editor [role=tabpanel][hidden]{display:none}.trk-editor{color:var(--trk-text);font:inherit}.trk-editor *{box-sizing:border-box}.trk-editor h2{margin:0 0 8px;font-size:calc(var(--trk-font-size)*1.5714)}.trk-editor h3{margin:0 0 12px;font-size:calc(var(--trk-font-size)*1.0714)}.trk-editor :where(.trk-editor-head p,.trk-editor-body > p,.trk-editor-parts > p,.trk-editor-points > p){font-size:calc(var(--trk-font-size)*0.9286);line-height:1.7;margin:8px 0;color:var(--trk-muted)}.trk-editor button,.trk-editor input,.trk-editor select{font:inherit;font-size:calc(var(--trk-font-size)*0.9286);min-height:var(--trk-control-height,32px);border:1px solid var(--trk-border);border-radius:var(--trk-radius-sm);color:var(--trk-text);background:var(--trk-surface);padding:5px 9px}.trk-editor button{cursor:pointer}.trk-editor button:hover:not(:disabled){background:var(--trk-hover)}.trk-editor button:disabled{opacity:.45;cursor:not-allowed}.trk-editor button:focus-visible,.trk-editor input:focus-visible,.trk-editor select:focus-visible{outline:2px solid var(--trk-focus);outline-offset:2px}.trk-editor button[aria-pressed=true],.trk-editor button[aria-selected=true]{border-color:var(--trk-accent);background:var(--trk-active)}.trk-editor label{display:flex;flex-direction:column;gap:6px;font-size:calc(var(--trk-font-size)*0.8571);margin:12px 0}.trk-editor input,.trk-editor select{width:100%;min-width:0;background:var(--trk-bg)}.trk-editor option{background:var(--trk-bg)}.trk-editor-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:10px}.trk-editor-actions,.trk-editor-tools{display:flex;gap:8px;flex-wrap:wrap}.trk-editor .trk-editor-save:hover:not(:disabled){background:var(--trk-primary-bg);color:var(--trk-on-accent)}.trk-editor .trk-editor-save{background:var(--trk-primary-bg);color:var(--trk-on-accent);border-color:var(--trk-accent);font-weight:650}.trk-editor-body{padding:0;border:0;margin:0;min-width:0}.trk-editor-instruction{min-height:22px}.trk-editor-grid{display:grid;grid-template-columns:minmax(220px,.7fr) minmax(300px,1.3fr);gap:10px;margin-top:10px}.trk-editor-parts,.trk-editor-points{background:var(--trk-surface);border:1px solid var(--trk-border);border-radius:var(--trk-radius-md);padding:10px;min-width:0}.trk-editor-part{display:flex;gap:6px;margin:6px 0;align-items:stretch}.trk-editor-part>button[role=tab]{flex:1;min-width:0;overflow-wrap:anywhere;text-align:left}.trk-editor-part small{display:block;color:var(--trk-muted);margin-top:4px}.trk-editor-part>button:not([role=tab]){width:44px;flex-shrink:0;padding:8px}.trk-editor-parts>button{width:100%}.trk-editor-position{display:flex;gap:8px;align-items:flex-end}.trk-editor-position label{margin:0;flex:1;min-width:70px}.trk-editor-position>button{flex-shrink:0}.trk-editor-coordinates{display:grid;grid-template-columns:1fr 1fr auto;gap:8px;align-items:flex-end;margin-bottom:12px}.trk-editor-coordinates label{margin:0}.trk-editor-error,.trk-editor-note,.trk-editor-discard{font-size:calc(var(--trk-font-size)*0.9286);line-height:1.7;padding:8px 10px;border-radius:var(--trk-radius-md);margin-bottom:12px;border:1px solid var(--trk-danger-border);background:var(--trk-danger-bg);color:var(--trk-danger);white-space:pre-wrap}.trk-editor-note{background:var(--trk-notice-bg);border-color:var(--trk-notice-border);color:var(--trk-notice)}.trk-editor-discard{display:flex;gap:6px;align-items:center;flex-wrap:wrap}.trk-editor-discard span{flex:1;min-width:220px}.trk-editor .trk-editor-validation{color:var(--trk-danger)}.trk-editor-body:disabled .trk-edit-map{pointer-events:none}
+.trk-editor-head{margin-bottom:14px}.trk-editor-head h2{margin-bottom:4px;font-size:calc(var(--trk-font-size)*1.4286)}.trk-editor-head p{margin:0}.trk-editor-topbar{display:flex;align-items:center;justify-content:space-between;gap:6px;padding:0 0 12px;margin-bottom:14px;border-bottom:1px solid var(--trk-border)}.trk-editor-tabs{gap:2px;margin:0;flex-wrap:nowrap;min-width:0}.trk-editor .trk-editor-tabs button{position:relative;display:flex;gap:7px;align-items:center;justify-content:center;min-height:var(--trk-control-height,32px);padding:5px 9px;border-color:transparent;background:transparent;border-radius:var(--trk-radius-sm);white-space:nowrap;color:var(--trk-muted)}.trk-editor .trk-editor-tabs button[aria-selected=true]{color:var(--trk-accent);background:var(--trk-active);border-color:transparent;font-weight:650}.trk-editor-tabs button[aria-selected=true]:after{content:'';position:absolute;left:15px;right:15px;bottom:-9px;height:3px;border-radius:3px;background:var(--trk-accent)}.trk-editor-draft-dot{flex-shrink:0;color:var(--trk-notice)}.trk-editor-draft-status{font-size:calc(var(--trk-font-size)*.8571);line-height:1.5;margin:0 0 12px;color:var(--trk-muted)}.trk-editor-topbar .trk-editor-actions{flex-shrink:0;justify-content:flex-end}.trk-editor-topbar .trk-editor-actions button{white-space:nowrap}
+@container(max-width:880px){.trk-editor-topbar{flex-wrap:wrap;gap:14px}.trk-editor-topbar .trk-editor-tabs{width:100%;border-bottom:1px solid var(--trk-border);padding-bottom:12px}.trk-editor-topbar .trk-editor-tabs button{flex:1;padding:5px 8px}.trk-editor-topbar .trk-editor-actions{width:100%;justify-content:flex-end}.trk-editor-topbar .trk-editor-actions button{flex:1}.trk-editor-topbar .trk-editor-actions .trk-editor-save{flex:1.6}}
 @container(max-width:750px){.trk-editor-head{flex-direction:column}.trk-editor-grid{grid-template-columns:1fr}.trk-editor-actions{width:100%}.trk-editor-head .trk-editor-actions button{flex:1}.trk-editor-coordinates{grid-template-columns:1fr 1fr}.trk-editor-coordinates button{grid-column:1/-1}.trk-editor-position{flex-wrap:wrap}.trk-editor-position label{min-width:110px}}
 @media(max-width:600px){.trk-editor-head{flex-direction:column}.trk-editor-grid{grid-template-columns:1fr}.trk-editor-coordinates{grid-template-columns:1fr 1fr}.trk-editor-coordinates button{grid-column:1/-1}}
 @media(forced-colors:active){.trk-editor button,.trk-editor input,.trk-editor select{border-color:var(--trk-border);background:var(--trk-bg);color:var(--trk-text)}.trk-editor button[aria-pressed=true],.trk-editor button[aria-selected=true]{border:2px solid var(--trk-focus)}.trk-editor-error,.trk-editor-note,.trk-editor-discard{background:var(--trk-bg);color:var(--trk-text);border-color:var(--trk-border)}}
-`
 
+.trk-editor{font-size:var(--trk-ui-font-size,13px)}.trk-editor h2,.trk-editor-head h2{font-size:16px}.trk-editor h3{font-size:13px;margin-bottom:8px}.trk-editor input,.trk-editor select{min-height:var(--trk-input-height,30px);padding:4px 7px}.trk-editor label{font-size:var(--trk-ui-label-size,12px);margin:8px 0}.trk-editor-topbar{gap:6px;padding:0 0 8px;margin-bottom:8px}.trk-editor-topbar .trk-editor-tabs button{min-height:var(--trk-control-height,32px)}.trk-editor-actions,.trk-editor-tools{gap:6px}.trk-editor-part{margin:0;border-bottom:1px solid var(--trk-border);gap:0}.trk-editor-part>button[role=tab]{min-height:40px;border:0;border-left:2px solid transparent;border-radius:0;padding:6px 8px;background:transparent}.trk-editor-part>button[role=tab][aria-selected=true]{border-left-color:var(--trk-accent);background:var(--trk-active)}.trk-editor-part>button:not([role=tab]){width:var(--trk-control-height,32px);padding:5px;border:0}.trk-editor-coordinates{margin-bottom:8px;gap:6px}.trk-editor .trk-overview-point[aria-pressed=true]{border-color:transparent;border-left-color:var(--trk-accent)}
+@container(max-width:750px){.trk-editor button{min-height:44px}.trk-editor input,.trk-editor select{min-height:40px}.trk-editor-topbar .trk-editor-tabs button{min-height:44px}.trk-editor .trk-overview-point{min-height:48px}.trk-editor-part>button:not([role=tab]){width:44px}}
+@media(pointer:coarse){.trk-editor button{min-height:44px}.trk-editor input,.trk-editor select{min-height:40px}.trk-editor-topbar .trk-editor-tabs button{min-height:44px}.trk-editor .trk-map-placemark,.trk-editor .trk-profile-marker{min-height:26px}.trk-editor-part>button:not([role=tab]){width:44px}}
+`
 

@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
-import { act, createElement } from 'react'
+import { act, createElement, useEffect } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { TrackEditor, type TrackEditorProps } from '../src/client/TrackEditor.tsx'
 import type { EditorMapProps } from '../src/client/EditorMap.tsx'
+import type { PlacemarkEditorState } from '../src/client/TrackOverview.tsx'
 import { editedMetrics } from '../src/track/edit.ts'
 import * as gpxExport from '../src/track/gpx-export.ts'
 import { UPLOADS, type TrackInput, type TrackPoint, type TrackRecord } from '../src/protocol.ts'
@@ -17,9 +18,20 @@ vi.mock('../src/client/util.ts', async importOriginal => ({
 }))
 
 const mapState = vi.hoisted(() => ({latest: null as EditorMapProps | null}))
-const pointEditorState = vi.hoisted(() => ({latest: null as {track: TrackRecord; onBusyChange?: (busy: boolean) => void;history?:object} | null}))
-vi.mock('../src/client/TrackOverview.tsx', () => ({TrackPlacemarkEditor: (props: {track: TrackRecord; onBusyChange?: (busy: boolean) => void;history?:object}) => {
+type PointEditorProps = {
+  track: TrackRecord; onBusyChange?: (busy: boolean) => void; history?: object
+  active?: boolean; deferSave?: boolean; onDraftStateChange?: (state: PlacemarkEditorState) => void
+}
+const pointEditorState = vi.hoisted(() => ({
+  latest: null as PointEditorProps | null, draft: null as PlacemarkEditorState | null, mounts: 0, unmounts: 0,
+}))
+vi.mock('../src/client/TrackOverview.tsx', () => ({TrackPlacemarkEditor: (props: PointEditorProps) => {
   pointEditorState.latest = props
+  useEffect(() => {
+    pointEditorState.mounts++
+    return () => {pointEditorState.unmounts++}
+  }, [])
+  useEffect(() => {props.onDraftStateChange?.(pointEditorState.draft!)}, [props.track.id, props.onDraftStateChange])
   return createElement('div', {'data-testid':'placemark-editor'})
 }}))
 vi.mock('../src/client/EditorMap.tsx', () => ({
@@ -50,6 +62,13 @@ beforeEach(() => {
   vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {callback(0); return 0})
   mapState.latest = null
   pointEditorState.latest = null
+  pointEditorState.mounts = 0
+  pointEditorState.unmounts = 0
+  pointEditorState.draft = {dirty: false, ready: true, save: vi.fn(async () => {
+    pointEditorState.draft = {...pointEditorState.draft!, dirty: false}
+    pointEditorState.latest?.onDraftStateChange?.(pointEditorState.draft)
+    return true
+  })}
   vi.mocked(api).mockReset().mockResolvedValue({annotations: [SVG_POINT], saved: true})
   container = document.createElement('div')
   document.body.appendChild(container)
@@ -76,6 +95,12 @@ function button(text: string): HTMLButtonElement {
   return found
 }
 async function click(text: string) { await act(async () => button(text).click()) }
+async function pointDraft(overrides: Partial<PlacemarkEditorState>) {
+  await act(async () => {
+    pointEditorState.draft = {...pointEditorState.draft!, ...overrides}
+    pointEditorState.latest!.onDraftStateChange!(pointEditorState.draft)
+  })
+}
 async function renderLine(overrides: Partial<TrackEditorProps> = {}) {
   await render(overrides)
   if (props.initial) await click('线路编辑')
@@ -183,8 +208,153 @@ describe('track editor drafts and copy saving', () => {
     expect(container.querySelector('[data-testid="placemark-editor"]')).not.toBeNull()
     expect(container.querySelector('[data-testid="editor-map"]')).toBeNull()
     expect(pointEditorState.latest!.track).toBe(props.initial)
+    expect(pointEditorState.latest!.deferSave).toBe(true)
+    expect(pointEditorState.latest!.active).toBe(true)
     expect(button('返回轨迹').disabled).toBe(false)
+    expect(button('保存标注点修改').disabled).toBe(true)
     expect(container.textContent).not.toContain('保存全部为 GPX 副本')
+  })
+  it('enables explicit point saving only for a ready dirty draft and never saves on local changes', async () => {
+    await render()
+    const save = pointEditorState.draft!.save
+    await click('保存标注点修改')
+    expect(save).not.toHaveBeenCalled()
+    await pointDraft({dirty: true, ready: false})
+    expect(button('保存标注点修改').disabled).toBe(true)
+    await click('保存标注点修改')
+    expect(save).not.toHaveBeenCalled()
+    await pointDraft({ready: true})
+    expect(button('保存标注点修改').disabled).toBe(false)
+    expect(save).not.toHaveBeenCalled()
+    expect(props.onSave).not.toHaveBeenCalled()
+    expect(api).not.toHaveBeenCalled()
+    await click('保存标注点修改')
+    expect(save).toHaveBeenCalledOnce()
+    expect(props.onSave).not.toHaveBeenCalled()
+  })
+  it('keeps a dirty point pane mounted and inactive across other tabs without saving its draft', async () => {
+    await render()
+    const pane = container.querySelector('[data-testid="placemark-editor"]')
+    const history = pointEditorState.latest!.history
+    const save = pointEditorState.draft!.save
+    await pointDraft({dirty: true})
+    expect(button('标注点编辑').title).toBe('有未保存的修改')
+    expect(button('标注点编辑').querySelector('svg')).not.toBeNull()
+    for (const tab of ['SVG 标注', '线路编辑']) {
+      await click(tab)
+      expect(container.querySelector('[data-testid="placemark-editor"]')).toBe(pane)
+      expect(pane?.closest('[hidden]')).not.toBeNull()
+      expect(pointEditorState.latest!.active).toBe(false)
+      expect(pointEditorState.latest!.history).toBe(history)
+      expect(button('标注点编辑').title).toBe('有未保存的修改')
+    }
+    await click('标注点编辑')
+    expect(container.querySelector('[data-testid="placemark-editor"]')).toBe(pane)
+    expect(pane?.closest('[hidden]')).toBeNull()
+    expect(pointEditorState.latest!.active).toBe(true)
+    expect(pointEditorState.mounts).toBe(1)
+    expect(pointEditorState.unmounts).toBe(0)
+    expect(container.textContent).toContain('有未保存的标注点修改 · 切换 Tab 会保留草稿')
+    expect(button('保存标注点修改').disabled).toBe(false)
+    expect(save).not.toHaveBeenCalled()
+    const unload = new Event('beforeunload', {cancelable: true})
+    window.dispatchEvent(unload)
+    expect(unload.defaultPrevented).toBe(true)
+  })
+  it('asks before returning with a point draft and preserves it when editing continues', async () => {
+    await render()
+    await pointDraft({dirty: true})
+    const save = pointEditorState.draft!.save
+    await click('返回轨迹')
+    expect(props.onCancel).not.toHaveBeenCalled()
+    expect(container.textContent).toContain('还有未保存的修改')
+    await click('继续编辑')
+    expect(container.querySelector('.trk-editor-discard')).toBeNull()
+    expect(button('保存标注点修改').disabled).toBe(false)
+    expect(button('标注点编辑').title).toBe('有未保存的修改')
+    await click('线路编辑')
+    await click('取消编辑')
+    expect(props.onCancel).not.toHaveBeenCalled()
+    expect(container.textContent).toContain('还有未保存的修改')
+    await click('放弃修改')
+    expect(props.onCancel).toHaveBeenCalledOnce()
+    expect(save).not.toHaveBeenCalled()
+  })
+  it('notifies the parent after a successful explicit point save and releases draft exit protection', async () => {
+    const onPlacemarksSaved = vi.fn()
+    await render({onPlacemarksSaved})
+    await pointDraft({dirty: true})
+    await click('保存标注点修改')
+    expect(pointEditorState.draft!.save).toHaveBeenCalledOnce()
+    expect(onPlacemarksSaved).toHaveBeenCalledOnce()
+    expect(props.onSave).not.toHaveBeenCalled()
+    expect(button('保存标注点修改').disabled).toBe(true)
+    expect(button('标注点编辑').title).toBe('')
+    expect(container.textContent).toContain('标注点修改已保存。')
+    const unload = new Event('beforeunload', {cancelable: true})
+    window.dispatchEvent(unload)
+    expect(unload.defaultPrevented).toBe(false)
+    await click('返回轨迹')
+    expect(props.onCancel).toHaveBeenCalledOnce()
+    expect(container.querySelector('.trk-editor-discard')).toBeNull()
+  })
+  it('retains a point draft and permits retry when the save controller returns false', async () => {
+    const onPlacemarksSaved = vi.fn()
+    const save = vi.fn(async () => false)
+    await render({onPlacemarksSaved})
+    await pointDraft({dirty: true, save})
+    await click('保存标注点修改')
+    expect(save).toHaveBeenCalledOnce()
+    expect(onPlacemarksSaved).not.toHaveBeenCalled()
+    expect(props.onSave).not.toHaveBeenCalled()
+    expect(button('保存标注点修改').disabled).toBe(false)
+    expect(button('标注点编辑').title).toBe('有未保存的修改')
+    expect(container.textContent).toContain('有未保存的标注点修改')
+    expect(container.textContent).not.toContain('标注点修改已保存。')
+    await click('保存标注点修改')
+    expect(save).toHaveBeenCalledTimes(2)
+    await click('返回轨迹')
+    expect(props.onCancel).not.toHaveBeenCalled()
+    expect(container.textContent).toContain('还有未保存的修改')
+  })
+  it('locks tabs and return and rejects duplicate point commits until the save settles', async () => {
+    const pending = deferred<boolean>()
+    const save = vi.fn(() => pending.promise)
+    await render()
+    await pointDraft({dirty: true, save})
+    await act(async () => {
+      const commit = button('保存标注点修改')
+      commit.click()
+      commit.click()
+    })
+    expect(save).toHaveBeenCalledOnce()
+    for (const label of ['标注点编辑', 'SVG 标注', '线路编辑', '正在处理点位…', '正在保存…']) expect(button(label).disabled).toBe(true)
+    await tabKey('标注点编辑', 'End')
+    expect(button('标注点编辑').getAttribute('aria-selected')).toBe('true')
+    await click('正在处理点位…')
+    expect(props.onCancel).not.toHaveBeenCalled()
+    await act(async () => pending.resolve(false))
+    for (const label of ['标注点编辑', 'SVG 标注', '线路编辑', '返回轨迹', '保存标注点修改']) expect(button(label).disabled).toBe(false)
+    expect(button('标注点编辑').title).toBe('有未保存的修改')
+  })
+  it('keeps editing after a line copy save while preserving an unsaved point draft', async () => {
+    const onPlacemarksSaved = vi.fn()
+    await renderLine({onPlacemarksSaved})
+    await pointDraft({dirty: true})
+    const save = pointEditorState.draft!.save
+    await mapAction(map => map.onMovePoint(1, 119.451, 30.351))
+    await click('保存全部为 GPX 副本')
+    expect(props.onSave).toHaveBeenCalledOnce()
+    expect(vi.mocked(props.onSave).mock.calls[0][1]).toEqual({keepEditing: true})
+    expect(save).not.toHaveBeenCalled()
+    expect(onPlacemarksSaved).not.toHaveBeenCalled()
+    expect(button('线路编辑').title).toBe('')
+    expect(button('标注点编辑').title).toBe('有未保存的修改')
+    await click('标注点编辑')
+    expect(button('保存标注点修改').disabled).toBe(false)
+    await click('返回轨迹')
+    expect(props.onCancel).not.toHaveBeenCalled()
+    expect(container.textContent).toContain('还有未保存的修改')
   })
   it('moves and focuses tabs with arrows, Home and End in their visible order', async () => {
     await render()
@@ -220,7 +390,7 @@ describe('track editor drafts and copy saving', () => {
     expect(container.querySelector('[data-testid="placemark-editor"]')).not.toBeNull()
     expect(container.querySelector('[data-testid="editor-map"]')).toBeNull()
     expect(pointEditorState.latest!.track).toBe(props.initial)
-    expect(container.textContent).toContain('修改自动保存到当前轨迹')
+    expect(container.textContent).toContain('修改可实时预览，点击保存后生效。')
     expect(container.textContent).not.toContain('保存全部为 GPX 副本')
     button('标注点编辑').focus()
     await shortcut()
@@ -256,7 +426,8 @@ describe('track editor drafts and copy saving', () => {
     expect(container.querySelector('.trk-art')).toBeNull()
     await click('SVG 标注')
     expect(api).toHaveBeenCalledExactlyOnceWith('annotations?id=original')
-    expect(container.querySelector('[data-testid="placemark-editor"]')).toBeNull()
+    expect(container.querySelector('[data-testid="placemark-editor"]')?.closest('[hidden]')).not.toBeNull()
+    expect(pointEditorState.latest!.active).toBe(false)
     expect(container.querySelector('[data-testid="editor-map"]')).toBeNull()
     expect(container.textContent).not.toContain('返回概览')
     const canvas = container.querySelector('.trk-art-overlay-canvas')

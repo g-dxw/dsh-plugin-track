@@ -5,7 +5,7 @@ import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest'
 import type {TrackRecord} from '../src/protocol.ts'
 import type {ResourceAsset, ResourceAssetPatch, ResourceLibraryEnvelope} from '../src/track/resources.ts'
 import {ResourceLibrary} from '../src/client/ResourceLibrary.tsx'
-import {loadResourceLibrary, updateResource, uploadResource} from '../src/client/resources-api.ts'
+import {deleteResource, loadResourceLibrary, updateResource, uploadResource} from '../src/client/resources-api.ts'
 const state = vi.hoisted(() => ({submit: vi.fn()}))
 vi.mock('../src/client/useResourceJobs.ts', () => ({useResourceJobs: () => ({working: false, error: '', submit: state.submit, sync: vi.fn(), cancel: vi.fn(), clearError: vi.fn()})}))
 vi.mock('../src/client/resources-api.ts', async original => ({...await original<typeof import('../src/client/resources-api.ts')>(), loadResourceLibrary: vi.fn(), updateResource: vi.fn(), uploadResource: vi.fn(), deleteResource: vi.fn(), prepareResourcePreview: vi.fn().mockResolvedValue(undefined)}))
@@ -92,5 +92,80 @@ describe('SVG annotation library images',()=>{
     expect(container.textContent).toContain('SVG 标注')
     await click('AI 图片创作');expect(onCreate).toHaveBeenCalledWith(['路线-SVG 标注.png'])
     expect(state.submit).not.toHaveBeenCalled()
+  })
+})
+
+describe('resource navigation and keyboard interaction', () => {
+  function narrowWorkspace() {vi.spyOn(container.querySelector<HTMLElement>('.trk-r')!, 'getBoundingClientRect').mockReturnValue({width: 600} as DOMRect)}
+  async function key(target: HTMLElement, value: string, shiftKey = false) {
+    const event = new KeyboardEvent('keydown', {key: value, shiftKey, bubbles: true, cancelable: true})
+    await act(async () => target.dispatchEvent(event)); return event
+  }
+  it('offers image creation in the library toolbar and empty collection without a selected asset', async () => {
+    library.assets = []; const onCreate = vi.fn(); await render({onCreate, track: {...track, id: 'empty-creation'}})
+    const toolbar = container.querySelector('.trk-r-toolbar')!, empty = container.querySelector('.trk-r-scroll .trk-r-empty')!
+    const start = (scope: Element) => [...scope.querySelectorAll<HTMLButtonElement>('button')].find(node => node.textContent === 'AI 图片创作')!
+    expect(start(toolbar)).toBeDefined(); expect(start(empty)).toBeDefined()
+    await act(async () => start(toolbar).click()); await act(async () => start(empty).click())
+    expect(onCreate.mock.calls).toEqual([[[]], [[]]]); expect(state.submit).not.toHaveBeenCalled()
+  })
+  it('opens checked resources directly, moves focus into the narrow workbench and returns to the same browse position', async () => {
+    await render({onCreate: vi.fn(), track: {...track, id: 'narrow-selection'}}); narrowWorkspace()
+    const scroll = container.querySelector<HTMLElement>('.trk-r-scroll')!; scroll.scrollTop = 275
+    await act(async () => {scroll.dispatchEvent(new Event('scroll')); container.querySelector<HTMLInputElement>('.trk-r-check input')!.click()})
+    const trigger = button('整理所选 1 项'); await click('整理所选 1 项')
+    expect(container.querySelector('.trk-r-panel-open')).not.toBeNull(); expect(container.textContent).toContain('批量整理 · 1 项')
+    expect(document.activeElement).toBe(button('← 查看素材'))
+    await click('← 查看素材')
+    expect(document.activeElement).toBe(trigger); expect(scroll.scrollTop).toBe(275)
+    expect(container.querySelector<HTMLInputElement>('.trk-r-check input')!.checked).toBe(true)
+  })
+  it('returns focus from narrow details and preview to the selected resource', async () => {
+    await render({track: {...track, id: 'narrow-details'}}); narrowWorkspace()
+    const selected = container.querySelector<HTMLButtonElement>('[aria-label="查看素材：真实照片"]')!
+    selected.focus(); await choose('真实照片'); expect(document.activeElement).toBe(button('← 查看素材'))
+    await click('← 查看素材'); expect(document.activeElement).toBe(selected)
+    await choose('真实照片'); await click('打开预览'); expect(document.activeElement).toBe(container.querySelector('.trk-r-main'))
+    await click('← 返回资源库')
+    expect(document.activeElement).toBe(container.querySelector('[aria-label="查看素材：真实照片"]'))
+  })
+  it('restores the deletion trigger after Cancel or Escape and keeps keyboard focus inside the dialog', async () => {
+    await render({track: {...track, id: 'delete-focus'}}); await choose('真实照片')
+    const trigger = button('移除资源'); await click('移除资源')
+    let dialog = container.querySelector<HTMLElement>('[role=dialog]')!; const cancel = button('取消'), confirm = button('确认移除')
+    confirm.focus(); expect((await key(confirm, 'Tab')).defaultPrevented).toBe(true); expect(document.activeElement).toBe(cancel)
+    expect((await key(cancel, 'Tab', true)).defaultPrevented).toBe(true); expect(document.activeElement).toBe(confirm)
+    await key(dialog, 'Escape'); expect(container.querySelector('[role=dialog]')).toBeNull(); expect(document.activeElement).toBe(trigger)
+    await click('移除资源'); dialog = container.querySelector<HTMLElement>('[role=dialog]')!; expect(dialog).not.toBeNull()
+    await click('取消'); expect(document.activeElement).toBe(trigger); expect(deleteResource).not.toHaveBeenCalled()
+  })
+  it('contains Tab and Escape while deletion is pending, then allows cancel after a failure', async () => {
+    let rejectDelete!: (error: Error) => void
+    vi.mocked(deleteResource).mockImplementationOnce(() => new Promise((_resolve, reject) => {rejectDelete = reject}))
+    await render({track: {...track, id: 'pending-delete-focus'}}); await choose('真实照片')
+    const trigger = button('移除资源'); await click('移除资源'); await click('确认移除')
+    const dialog = container.querySelector<HTMLElement>('[role=dialog]')!
+    expect(button('取消').disabled).toBe(true); expect(button('确认移除').disabled).toBe(true); expect(document.activeElement).toBe(dialog)
+    expect((await key(dialog, 'Tab')).defaultPrevented).toBe(true); expect(document.activeElement).toBe(dialog)
+    expect((await key(dialog, 'Tab', true)).defaultPrevented).toBe(true); expect(document.activeElement).toBe(dialog)
+    await key(dialog, 'Escape'); expect(container.querySelector('[role=dialog]')).toBe(dialog)
+    await act(async () => rejectDelete(new Error('资源暂时无法移除')))
+    expect(button('取消').disabled).toBe(false); await click('取消'); expect(document.activeElement).toBe(trigger)
+    expect(container.textContent).toContain('资源暂时无法移除')
+  })
+  it('restores list display, filters, selected resource and scroll after reopening the same track', async () => {
+    const reopenedTrack = {...track, id: 'resource-view-retention'}; await render({track: reopenedTrack})
+    await click('视频'); await choose('旅程视频'); await click('列表')
+    await act(async () => {
+      const filter = container.querySelector<HTMLSelectElement>('[aria-label="筛选资源"]')!; filter.value = 'unused'; filter.dispatchEvent(new Event('change', {bubbles: true}))
+      const sort = container.querySelector<HTMLSelectElement>('[aria-label="素材排序"]')!; sort.value = 'name'; sort.dispatchEvent(new Event('change', {bubbles: true}))
+      const scroll = container.querySelector<HTMLElement>('.trk-r-scroll')!; scroll.scrollTop = 180; scroll.dispatchEvent(new Event('scroll'))
+    })
+    await act(async () => root.render(null)); await render({track: reopenedTrack})
+    expect(container.querySelector('.trk-r-assets.trk-r-list')).not.toBeNull(); expect(button('视频').getAttribute('aria-pressed')).toBe('true')
+    expect(container.querySelector<HTMLSelectElement>('[aria-label="筛选资源"]')!.value).toBe('unused')
+    expect(container.querySelector<HTMLSelectElement>('[aria-label="素材排序"]')!.value).toBe('name')
+    expect(container.querySelector('.trk-r-card.is-selected')?.textContent).toContain('旅程视频')
+    expect(container.querySelector<HTMLElement>('.trk-r-scroll')!.scrollTop).toBe(180)
   })
 })

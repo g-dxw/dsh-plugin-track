@@ -64,13 +64,14 @@ describe('SVG annotation workspace and point drawer',()=>{
   it('saves layouts separately from the track and exports the same SVG without selection borders',async()=>{
     await render();await select();await input('点位名称','牧场');await input('点位横坐标','800')
     const saved={...point,label:'牧场',position:{x:800,y:expect.any(Number)}}
+    await click('完成编辑')
     vi.mocked(api).mockImplementation(async(_action,data)=>({annotations:(data as {annotations:TrackAnnotation[]}).annotations}) as never);await click('保存画布')
     expect(api).toHaveBeenLastCalledWith('annotations',{id:track.id,canvas:{width:1200,height:900},annotations:[saved]});expect(button('保存画布').disabled).toBe(true)
     await click('导出 SVG');expect(download).toHaveBeenCalledWith('山口路线-轨迹标注.svg',expect.stringContaining(image),'image/svg+xml')
     expect(vi.mocked(download).mock.calls[0][1]).not.toContain('stroke="#ea793a"')
   })
   it('retains a failed save and requires a concrete discard action before leaving',async()=>{
-    await render();await select();await input('点位名称','牧场');vi.mocked(api).mockRejectedValue(new Error('磁盘不可写'));await click('保存画布')
+    await render();await select();await input('点位名称','牧场');await click('完成编辑');vi.mocked(api).mockRejectedValue(new Error('磁盘不可写'));await click('保存画布')
     expect(node.textContent).toContain('画布草稿已保留');expect(node.querySelector('svg[data-art-scene]')?.textContent).toContain('牧场')
     await click('返回概览');expect(close).not.toHaveBeenCalled();await click('继续编辑');await click('返回概览');await click('放弃草稿');expect(close).toHaveBeenCalledOnce()
   })
@@ -86,6 +87,7 @@ describe('SVG annotation workspace and point drawer',()=>{
   it('loads a selected KML image into the card and preserves an existing photo position',async()=>{
     vi.mocked(api).mockResolvedValue({annotations:[{...point,imageUrls:['https://example.com/a.jpg']}],saved:true});await render();await select();await click('选择图片 1')
     expect(readLinkedAnnotationPhoto).toHaveBeenCalledWith('https://example.com/a.jpg',track.id)
+    await click('完成编辑')
     vi.mocked(api).mockImplementation(async(_action,data)=>({annotations:(data as {annotations:TrackAnnotation[]}).annotations}) as never);await click('保存画布')
     const payload=vi.mocked(api).mock.calls.at(-1)![1] as {annotations:TrackAnnotation[]}
     expect(payload.annotations[0].photo).toEqual({dataUrl:image,x:50,y:200,sourceUrl:'https://example.com/a.jpg'})
@@ -121,7 +123,7 @@ describe('SVG annotations embedded in the track editor',()=>{
   it('lets the editor own navigation and unload protection and reports an empty-name draft',async()=>{
     const onStateChange=vi.fn(),listen=vi.spyOn(window,'addEventListener')
     await render(track,false,{embedded:true,onStateChange})
-    expect(node.querySelector('h2')?.textContent).toBe('SVG 标注')
+    expect(node.querySelector('h2')).toBeNull();expect(node.querySelector('.trk-art-head')).toBeNull()
     expect(node.textContent).not.toContain('返回概览');expect(node.textContent).not.toContain('放弃草稿')
     expect(onStateChange).toHaveBeenLastCalledWith({dirty:false,busy:false})
     await select();expect(onStateChange).toHaveBeenCalledTimes(1)
@@ -132,6 +134,7 @@ describe('SVG annotations embedded in the track editor',()=>{
   it('reports pending saves and resets the draft state only after a successful save',async()=>{
     const onStateChange=vi.fn(),pending=deferred<{annotations:TrackAnnotation[]}>()
     await render(track,false,{embedded:true,onStateChange});await select();await input('点位名称','牧场')
+    await click('完成编辑')
     vi.mocked(api).mockReturnValueOnce(pending.promise);await click('保存画布')
     expect(onStateChange).toHaveBeenLastCalledWith({dirty:true,busy:true})
     await act(async()=>pending.resolve({annotations:[{...point,label:'牧场'}]}))
@@ -207,6 +210,7 @@ describe('SVG point visibility and canvas navigation',()=>{
     await choose('点位类型','rest');await toggle();expect(displaySwitch().getAttribute('aria-checked')).toBe('false')
     await choose('点位类型','checkin');expect(displaySwitch().getAttribute('aria-checked')).toBe('false')
     await click('恢复类型默认');expect(displaySwitch().getAttribute('aria-checked')).toBe('true')
+    await click('完成编辑')
     vi.mocked(api).mockImplementation(async(_action,data)=>({annotations:(data as {annotations:TrackAnnotation[]}).annotations}) as never)
     await click('保存画布');const saved=(vi.mocked(api).mock.calls.at(-1)![1] as {annotations:TrackAnnotation[]}).annotations[0]
     expect(saved.kind).toBe('checkin');expect(saved).not.toHaveProperty('visible');expect(saved.photo).toEqual(point.photo)
@@ -333,7 +337,7 @@ describe('route transforms with associated artwork and fixed page text',()=>{
   const [sourceX,sourceY]=diagramCoordinates(track.coordinates)[1],position={x:(sourceX+route.x)*route.scale,y:(sourceY+route.y)*route.scale}
   expect(position.x).toBeGreaterThan(24);expect(position.x).toBeLessThan(1176);expect(position.y).toBeGreaterThan(120)
   await act(async()=>node.querySelector('.trk-art-overlay-canvas')!.dispatchEvent(new MouseEvent('dblclick',{bubbles:true,clientX:position.x,clientY:position.y})))
-  expect(node.querySelectorAll('[data-point-id]')).toHaveLength(1);echoSave();await click('保存画布');const payload=vi.mocked(api).mock.calls.at(-1)![1] as {annotations:TrackAnnotation[];route:ArtRouteTransform}
+  expect(node.querySelectorAll('[data-point-id]')).toHaveLength(1);await click('完成编辑');echoSave();await click('保存画布');const payload=vi.mocked(api).mock.calls.at(-1)![1] as {annotations:TrackAnnotation[];route:ArtRouteTransform}
   expect(payload.annotations[0].pointIndex).toBe(1);expect(payload.annotations[0].position).toEqual({x:sourceX,y:sourceY});expect(payload.route).toEqual(route);expect(track.coordinates[1]).toEqual([119.5,30.4,null,null])
  })
  it('synchronizes attached labels, markers, photos and connectors during a camera gesture before history commits',async()=>{
@@ -420,6 +424,7 @@ describe('SVG follows saved placemark visibility and groups',()=>{
     await click('导出 SVG');const exported=vi.mocked(download).mock.calls.at(-1)![1]
     expect(exported).toContain(`data-annotation-id="${group.id}"`);expect(exported).not.toContain('data-photo-id="hidden"')
     await act(async()=>node.querySelector<HTMLButtonElement>(`[data-point-id="${group.id}"]`)!.click());expect(node.querySelector('.trk-point-drawer header small')?.textContent).toBe('点位 1');expect(node.querySelector<HTMLInputElement>('[aria-label="点位名称"]')!.readOnly).toBe(true);await input('当前点位标记颜色','#2563eb')
+    await click('完成编辑')
     vi.mocked(api).mockImplementation(async(_action,data)=>data as never);await click('保存画布')
     const saved=(vi.mocked(api).mock.calls.at(-1)![1] as {annotations:TrackAnnotation[]}).annotations
     expect(saved.slice(0,stored.length)).toEqual(stored);expect(saved.at(-1)).toMatchObject({sourceId:group.id,label:group.name,style:{markerColor:'#2563eb'}})
@@ -458,6 +463,7 @@ describe('SVG follows saved placemark visibility and groups',()=>{
     expect(node.querySelector('[data-source-coordinates]')?.textContent).toContain('119.560000');expect(node.querySelector('[data-annotation-id="a"] circle')?.getAttribute('cx')).toBe('600.00')
     expect(node.querySelector('[data-annotation-anchor-id="a"]')).not.toBeNull();expect(button('保存画布').disabled).toBe(true)
     await click('标记回到真实位置');expect(node.querySelector('[data-annotation-id="a"] circle')?.getAttribute('cx')).not.toBe('600.00')
+    await click('完成编辑')
     vi.mocked(api).mockImplementation(async(_action,data)=>data as never);await click('保存画布')
     const saved=(vi.mocked(api).mock.calls.at(-1)![1] as {annotations:TrackAnnotation[]}).annotations[0]
     expect(saved).toMatchObject({label:moved.name,description:moved.description,sourceCoordinates:moved.coordinates,color:stored.color});expect(saved.position).toBeUndefined()
@@ -484,10 +490,89 @@ describe('SVG follows saved placemark visibility and groups',()=>{
 function fieldValue(label:string){return node.querySelector<HTMLInputElement>(`input[aria-label="${label}"]`)!.value}
 
 
+describe('compact SVG workspace layout',()=>{
+  const fileLabels=['保存画布','保存到资源库','导出 SVG','导出轨迹 SVG']
+  const settings=()=>node.querySelector<HTMLElement>('[aria-label="画布设置"]')!
+  const folds=()=>[settings().closest('details')!,button('导出 SVG').closest('details')!] as HTMLDetailsElement[]
+  it('keeps standalone navigation in a short header and moves complete unique file and size controls into the sidebar',async()=>{
+    await render()
+    const header=node.querySelector('.trk-art-head')!,sidebar=node.querySelector('.trk-art-sidebar')!,toolbar=node.querySelector('[aria-label="画布工具"]')!
+    expect(header.querySelector('h2')?.textContent).toBe('轨迹标注')
+    expect(button('返回概览').closest('.trk-art-head')).toBe(header)
+    for(const label of fileLabels){
+      expect([...node.querySelectorAll('button')].filter(item=>item.textContent===label)).toHaveLength(1)
+      expect(button(label).closest('.trk-art-sidebar')).toBe(sidebar)
+      expect(toolbar.contains(button(label))).toBe(false)
+      expect(header.contains(button(label))).toBe(false)
+    }
+    expect(node.querySelectorAll('[aria-label="画布设置"]')).toHaveLength(1)
+    expect(settings().closest('.trk-art-sidebar')).toBe(sidebar)
+    for(const label of ['画布比例','画布宽度','画布高度']){
+      expect(node.querySelectorAll(`[aria-label="${label}"]`)).toHaveLength(1)
+      expect(settings().contains(node.querySelector(`[aria-label="${label}"]`))).toBe(true)
+    }
+    for(const label of ['应用尺寸','适配画布'])expect(settings().contains(button(label))).toBe(true)
+    for(const label of ['选择 / 移动','拖动轨迹','统一样式','画布文字','添加点位','撤销','重做','重置轨迹'])expect(toolbar.contains(button(label))).toBe(true)
+    expect(toolbar.contains(node.querySelector('[aria-label="轨迹缩放"]'))).toBe(true)
+    expect(sidebar.querySelector('[data-point-id="a"]')).not.toBeNull()
+    expect(button('保存画布').matches(':disabled')).toBe(true)
+    for(const label of fileLabels.slice(1))expect(button(label).matches(':disabled')).toBe(false)
+  })
+  it('opens native settings and export folds without changing a clean canvas, history or save status',async()=>{
+    const onStateChange=vi.fn()
+    await render(track,false,{embedded:true,onStateChange})
+    const canvas=node.querySelector('.trk-art-board')!,overlay=node.querySelector('.trk-art-overlay-canvas')!,drawing=overlay.innerHTML
+    const reads=vi.mocked(api).mock.calls.length,notifications=onStateChange.mock.calls.length
+    const [size,exportFiles]=folds()
+    expect(size.open).toBe(false);expect(exportFiles.open).toBe(false)
+    expect(size.querySelector('summary')?.textContent).toContain('1200')
+    expect(size.querySelector('summary')?.textContent).toContain('900')
+    for(const fold of [size,exportFiles]){
+      await act(async()=>fold.querySelector('summary')!.click());expect(fold.open).toBe(true)
+      await act(async()=>fold.querySelector('summary')!.click());expect(fold.open).toBe(false)
+    }
+    expect(node.querySelector('.trk-art-board')).toBe(canvas);expect(node.querySelector('.trk-art-overlay-canvas')).toBe(overlay);expect(overlay.innerHTML).toBe(drawing)
+    expect(button('保存画布').matches(':disabled')).toBe(true);expect(button('撤销').disabled).toBe(true);expect(button('重做').disabled).toBe(true)
+    expect(onStateChange).toHaveBeenLastCalledWith({dirty:false,busy:false});expect(onStateChange).toHaveBeenCalledTimes(notifications)
+    expect(api).toHaveBeenCalledTimes(reads);expect(download).not.toHaveBeenCalled();expect(storeAnnotationImage).not.toHaveBeenCalled()
+  })
+  it('preserves a dirty canvas and its undo history when settings or export folds are toggled',async()=>{
+    const onStateChange=vi.fn()
+    await render(track,false,{embedded:true,onStateChange});await select();await input('点位名称','折叠区草稿');await click('完成编辑')
+    const canvas=node.querySelector('.trk-art-overlay-canvas')!,drawing=canvas.innerHTML,reads=vi.mocked(api).mock.calls.length,notifications=onStateChange.mock.calls.length
+    for(const fold of folds())await act(async()=>{fold.open=true;fold.open=false})
+    expect(node.querySelector('.trk-art-overlay-canvas')).toBe(canvas);expect(canvas.innerHTML).toBe(drawing)
+    expect(button('保存画布').matches(':disabled')).toBe(false);expect(button('撤销').disabled).toBe(false)
+    expect(onStateChange).toHaveBeenLastCalledWith({dirty:true,busy:false});expect(onStateChange).toHaveBeenCalledTimes(notifications)
+    expect(api).toHaveBeenCalledTimes(reads);expect(download).not.toHaveBeenCalled();expect(storeAnnotationImage).not.toHaveBeenCalled()
+    await click('撤销');expect(button('保存画布').matches(':disabled')).toBe(true);expect(button('重做').disabled).toBe(false)
+  })
+  it.each(['point','text','style'] as const)('removes covered file and size controls from focus while the %s drawer is open and restores them on close',async mode=>{
+    await render();await select();await input('点位名称','抽屉保留草稿');await click('完成编辑')
+    for(const fold of folds())await act(async()=>{fold.open=true})
+    const controls=[...fileLabels.map(button),...settings().querySelectorAll<HTMLInputElement|HTMLSelectElement|HTMLButtonElement>('input,select,button')]
+    for(const control of controls)expect(control.matches(':disabled')).toBe(false)
+    if(mode==='point')await select();else await click(mode==='text'?'画布文字':'统一样式')
+    const drawer=node.querySelector('[role=dialog]')!,focused=document.activeElement
+    expect(drawer.contains(focused)).toBe(true)
+    for(const control of controls){expect(control.matches(':disabled')).toBe(true);control.focus();expect(document.activeElement).toBe(focused)}
+    for(const fold of folds())expect(fold.querySelector('summary')!.tabIndex).toBe(-1)
+    expect(button('＋ 添加').tabIndex).toBe(-1)
+    expect(node.querySelector<HTMLButtonElement>('[data-point-id="a"]')!.tabIndex).toBe(-1)
+    await click('关闭')
+    expect(node.querySelector('[role=dialog]')).toBeNull()
+    for(const control of controls)expect(control.matches(':disabled')).toBe(false)
+    for(const fold of folds())expect(fold.querySelector('summary')!.tabIndex).toBe(0)
+    expect(button('＋ 添加').tabIndex).toBe(0)
+    expect(node.querySelector<HTMLButtonElement>('[data-point-id="a"]')!.tabIndex).toBe(0)
+    expect(button('保存画布').matches(':disabled')).toBe(false)
+  })
+})
+
 describe('compact canvas and explicit PNG library export',()=>{
   function echo(){vi.mocked(api).mockImplementation(async(_action,data)=>data as never)}
   it('saves only the editable layout and offers PNG export even with no dirty changes',async()=>{
-    await render();expect(button('保存到资源库').disabled).toBe(false);await select();await input('点位名称','牧场');echo();await click('保存画布')
+    await render();expect(button('保存到资源库').disabled).toBe(false);await select();await input('点位名称','牧场');await click('完成编辑');echo();await click('保存画布')
     expect(storeAnnotationImage).not.toHaveBeenCalled();expect(button('保存画布').disabled).toBe(true)
     await click('保存到资源库');expect(storeAnnotationImage).toHaveBeenCalledOnce()
     const snapshot=vi.mocked(storeAnnotationImage).mock.calls[0][0],doc=new DOMParser().parseFromString(snapshot.svg,'image/svg+xml')
@@ -497,7 +582,7 @@ describe('compact canvas and explicit PNG library export',()=>{
     expect(snapshot.svg).not.toContain('stroke="#ea793a"');expect(snapshot.svg).toContain(image);expect(snapshot.svg).toContain('牧场')
   })
   it('exports the draft without implicitly saving or discarding editable changes',async()=>{
-    await render();await select();await input('点位名称','PNG 独立草稿');const calls=vi.mocked(api).mock.calls.length
+    await render();await select();await input('点位名称','PNG 独立草稿');await click('完成编辑');const calls=vi.mocked(api).mock.calls.length
     await click('保存到资源库');expect(api).toHaveBeenCalledTimes(calls);expect(button('保存画布').disabled).toBe(false)
     expect(vi.mocked(storeAnnotationImage).mock.calls[0][0].svg).toContain('PNG 独立草稿')
   })

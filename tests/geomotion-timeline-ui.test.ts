@@ -98,6 +98,31 @@ afterEach(async () => {
   vi.restoreAllMocks(); vi.unstubAllGlobals()
 })
 
+describe('timeline sidebar alignment', () => {
+  it('fits the final tick using the same width as the editor sidebar and follows sidebar resizing', async () => {
+    host.classList.add('trk-gm'); host.style.setProperty('--trk-gm-sidebar-width', '220px')
+    await render()
+    const content = host.querySelector<HTMLElement>('.trk-gm-tl-content')!
+    const endpoint = host.querySelector<HTMLElement>('.trk-gm-tl-tick.is-endpoint')!
+    expect(content.style.gridTemplateColumns).toBe('220px 762px')
+    expect(endpoint.style.left).toBe('762px')
+    host.style.setProperty('--trk-gm-sidebar-width', '190px')
+    await act(async () => window.dispatchEvent(new Event('resize')))
+    expect(content.style.gridTemplateColumns).toBe('190px 792px')
+    expect(endpoint.style.left).toBe('792px')
+    expect(props.onKeyTime).not.toHaveBeenCalled(); expect(props.onLayerRange).not.toHaveBeenCalled()
+  })
+  it('reserves room for tracks in a narrow viewport even with a wider shared sidebar setting', async () => {
+    host.classList.add('trk-gm'); host.style.setProperty('--trk-gm-sidebar-width', '220px')
+    actualRect = {left: 100, width: 640}; await render()
+    const content = host.querySelector<HTMLElement>('.trk-gm-tl-content')!
+    expect(content.style.gridTemplateColumns).toBe('140px 482px')
+    await clickAt(ruler(), 420)
+    expect(props.onSeek).toHaveBeenLastCalledWith(5)
+    expect(props.onKeyTime).not.toHaveBeenCalled(); expect(props.onLayerRange).not.toHaveBeenCalled()
+  })
+})
+
 describe('editing timeline geometry and seek', () => {
   it('seeks from the actual ruler rectangle rather than a CSS percentage or viewport width', async () => {
     await render(); await clickAt(ruler(), 350)

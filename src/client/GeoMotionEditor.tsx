@@ -1,4 +1,4 @@
-import {useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type KeyboardEvent} from 'react'
+import {useCallback, useEffect, useMemo, useRef, useState, useId, type ChangeEvent, type KeyboardEvent} from 'react'
 import type {TrackRecord} from '../protocol.ts'
 import type {BasemapId} from '../track/basemaps.ts'
 import {isBasemapId, type MapSettings} from '../track/map-settings.ts'
@@ -10,7 +10,7 @@ import {GeoMotionScene, type GeoMotionSceneHandle} from './GeoMotionScene.tsx'
 import {exportGeoMotionVideo} from './geomotion-video-export.ts'
 import {api, clipboardSafeName, download} from './util.ts'
 import {GeoMotionTimeline} from './GeoMotionTimeline.tsx'
-import {ShotProjectBackup, ShotWorkbench, ShotWorkbenchToolbar} from './ShotWorkbench.tsx'
+import {ShotProjectBackup, ShotWorkbench, ShotWorkbenchToolbar, ShotWorkbenchIcon} from './ShotWorkbench.tsx'
 import {EditorConfirmationDialog, useEditorNavigation, type EditorNavigationHandle} from './editor-navigation.tsx'
 import {timelineKeyCollision} from '../track/geomotion-timeline.ts'
 import {geoProjectFromVideoMaterials, type VideoMaterialsDocument} from '../track/video-materials.ts'
@@ -70,6 +70,7 @@ function EditorWorkspace({track, basemap, onBasemap, onCancel, onCases, onMateri
   const [notice, setNotice] = useState(''), [error, setError] = useState('')
   const [rebuildRequested, setRebuildRequested] = useState(false)
   const [panel, setPanel] = useState<'preview' | 'layers' | 'properties'>('preview')
+  const [layerQuery, setLayerQuery] = useState(''), [focusPreview, setFocusPreview] = useState(false)
   const [capture, setCapture] = useState<FrozenCapture | null>(null)
   const [progress, setProgress] = useState({completed: 0, total: 0})
   const [video, setVideo] = useState<CapturedVideo | null>(null)
@@ -99,6 +100,10 @@ function EditorWorkspace({track, basemap, onBasemap, onCancel, onCases, onMateri
   const keys = useMemo(() => project ? geoCameraKeys(project) : [], [project])
   const activeKey = keys.find(key => key.id === selectedKey) || keys[0]
   const layers = useMemo(() => project ? Object.values(project.nodes).filter(node => node.type !== 'camera' && node.type !== 'group') : [], [project])
+  const visibleLayers = useMemo(() => {
+    const query = layerQuery.trim().toLocaleLowerCase('zh-CN')
+    return layers.filter(node => !query || node.name.toLocaleLowerCase('zh-CN').includes(query))
+  }, [layers, layerQuery])
   const layer = project?.nodes[selectedLayer]
   const activeLayer = layer && layer.type !== 'camera' && layer.type !== 'group' ? layer : null
   const dirty = !!project && (serialise(project) !== savedText || sourceFingerprint !== savedFingerprint)
@@ -373,7 +378,7 @@ function EditorWorkspace({track, basemap, onBasemap, onCancel, onCases, onMateri
   const sourceError = placemarks.error || placemarks.stateError || placemarks.routeError
   const visibleSaveStatus = dirty && !saving && loadState === 'ready' && saveStatus !== '保存失败，当前编辑仍保留'
     ? '等待保存到轨迹工作区' : saveStatus
-  return <ShotWorkbench workspaceRef={workspace} panel={panel} onKeyDown={keyboard} ariaLabel="地图场景镜头编辑" context={<>地图场景 · {track.name}{scope && <> · 分镜 {scope.sceneId}</>}</>} dirty={dirty} status={visibleSaveStatus} dialog={<>{navigation.dialog}{active && rebuildRequested && <EditorConfirmationDialog title="重建当前镜头工程？" description="将用当前轨迹和地名替换图层，并重新生成相机关键帧。重建后可撤销恢复，确认保存前不会改写已保存工程。" confirmLabel="确认重建工程" busy={recording || saving || playing} onCancel={() => setRebuildRequested(false)} onConfirm={() => {rebuild(); setRebuildRequested(false)}}/>}</>}
+  return <ShotWorkbench fitViewport className={`trk-gm-map-editor${focusPreview ? ' is-preview-focused' : ''}`} workspaceRef={workspace} panel={panel} onKeyDown={keyboard} ariaLabel="地图场景镜头编辑" context={<>地图场景 · {track.name}{scope && <> · 分镜 {scope.sceneId}</>}</>} dirty={dirty} status={visibleSaveStatus} dialog={<>{navigation.dialog}{active && rebuildRequested && <EditorConfirmationDialog title="重建当前镜头工程？" description="将用当前轨迹和地名替换图层，并重新生成相机关键帧。重建后可撤销恢复，确认保存前不会改写已保存工程。" confirmLabel="确认重建工程" busy={recording || saving || playing} onCancel={() => setRebuildRequested(false)} onConfirm={() => {rebuild(); setRebuildRequested(false)}}/>}</>}
     navigation={<>
       {onMaterials&&!scope&&<button type="button" disabled={!active || recording || saving || uploading || rebuildRequested} onClick={()=>navigation.requestLeave(onMaterials)}>二维素材准备</button>}
       {onCases && <button type="button" disabled={!active || recording || saving || uploading || rebuildRequested} onClick={() => navigation.requestLeave(onCases)}>返回视频制作</button>}
@@ -384,18 +389,18 @@ function EditorWorkspace({track, basemap, onBasemap, onCancel, onCases, onMateri
         <button type="button" disabled={!project || recording} onClick={exportJson}>导出 JSON</button>
         <label className={`trk-gm-file${locked || !project ? ' is-disabled' : ''}`}>导入 JSON<input aria-label="导入镜头工程 JSON" type="file" accept="application/json,.json" disabled={locked || !project} onChange={event => void importJson(event)}/></label>
       </>}>
-        <button type="button" disabled={!past.length || locked || saving} onClick={() => history('undo')}>撤销</button>
-        <button type="button" disabled={!future.length || locked || saving} onClick={() => history('redo')}>重做</button>
-        <button type="button" className="trk-gm-primary" disabled={!active || !project || loadState !== 'ready' || saving || recording || uploading} onClick={() => void saveProject()}>{saving ? '正在保存…' : '保存工程'}</button>
-        <button type="button" disabled={!ready || playing || recording || saving || uploading || !!scope && (dirty || !revision)} onClick={() => void exportVideo()}>导出 WebM 视频</button>
+        <button type="button" disabled={!past.length || locked || saving} onClick={() => history('undo')} title="撤销" aria-label="撤销" className="trk-gm-icon-button"><ShotWorkbenchIcon name="undo"/><span className="trk-gm-sr-only">撤销</span></button>
+        <button type="button" disabled={!future.length || locked || saving} onClick={() => history('redo')} title="重做" aria-label="重做" className="trk-gm-icon-button"><ShotWorkbenchIcon name="redo"/><span className="trk-gm-sr-only">重做</span></button>
+        <button type="button" className="trk-gm-primary" disabled={!active || !project || loadState !== 'ready' || saving || recording || uploading} onClick={() => void saveProject()}><ShotWorkbenchIcon name="save"/>{saving ? '正在保存…' : '保存工程'}</button>
+        <button type="button" disabled={!ready || playing || recording || saving || uploading || !!scope && (dirty || !revision)} onClick={() => void exportVideo()}><ShotWorkbenchIcon name="export"/><span>导出 <span className="trk-gm-compact-hide">WebM </span>视频</span></button>
     </ShotWorkbenchToolbar>}
     timeline={<GeoMotionTimeline duration={duration} fps={project?.fps || 30} time={time} keys={keys} layers={layers}
       selectedKeyId={activeKey?.id || ''} selectedLayerId={selectedLayer} playing={playing} recording={recording}
       disabled={!ready || recording || uploading} editDisabled={!ready || locked}
       onSeek={seek} onPlayPause={()=>{setPlaying(value=>!value);setCameraMoved(false)}} onAddKey={recordCamera}
-      onSelectKey={(id,t)=>{setSelectedKey(id);setSelectedLayer('camera');seek(t);setPanel('properties')}}
+      onSelectKey={(id,t)=>{setSelectedKey(id);setSelectedLayer('camera');seek(t);setPanel('properties');setFocusPreview(false)}}
       onKeyTime={(id,t)=>{const key=latest.current&&geoCameraKeys(latest.current).find(key=>key.id===id);if(!key)return;if(timelineKeyCollision(id,t,geoCameraKeys(latest.current!))){setNotice('此时间已有关键帧，请移动到其他时间');return}editProject(value=>geoSetCameraKey(value,{...key,t}));seek(t)}}
-      onSelectLayer={id=>{setSelectedLayer(id);setPanel('properties')}}
+      onSelectLayer={id=>{setSelectedLayer(id);setPanel('properties');setFocusPreview(false)}}
       onLayerRange={(id,range,mode)=>editProject(value=>geoSetLayerWindow(value,id,range,mode))}
       onToggleLayer={id=>{const node=latest.current?.nodes[id];if(node&&node.type!=='camera'&&node.type!=='group'&&!node.locked)layerPatch({visible:!node.visible},id)}}/>}
     footer={<span>{project?.width || 1280} × {project?.height || 720} · {project?.fps || 30} 帧 / 秒</span>}>
@@ -404,62 +409,74 @@ function EditorWorkspace({track, basemap, onBasemap, onCancel, onCases, onMateri
     {error && <div role="alert" className="trk-gm-alert"><span>{error}</span><button type="button" disabled={locked || saving} onClick={() => setLoadAttempt(value => value + 1)}>重新读取已保存工程</button></div>}
     {sourceChanged && <div role="status" className="trk-gm-notice"><span>轨迹或已保存地名已变化，当前镜头仍使用原工程。</span><button type="button" disabled={locked || saving} onClick={requestRebuild}>根据当前轨迹重建</button></div>}
     {notice && <p className="trk-gm-notice" role="status">{notice}</p>}
-    <nav className="trk-gm-panel-tabs" aria-label="编辑面板"><button type="button" aria-pressed={panel === 'layers'} disabled={recording} onClick={() => setPanel('layers')}>图层和地名</button><button type="button" aria-pressed={panel === 'preview'} disabled={recording} onClick={() => setPanel('preview')}>地图预览</button><button type="button" aria-pressed={panel === 'properties'} disabled={recording} onClick={() => setPanel('properties')}>镜头属性</button></nav>
+    <nav className="trk-gm-panel-tabs" aria-label="编辑面板"><button type="button" aria-pressed={panel === 'layers'} disabled={recording} onClick={() => {setPanel('layers'); setFocusPreview(false)}}>图层和地名</button><button type="button" aria-pressed={panel === 'preview'} disabled={recording} onClick={() => setPanel('preview')}>地图预览</button><button type="button" aria-pressed={panel === 'properties'} disabled={recording} onClick={() => {setPanel('properties'); setFocusPreview(false)}}>镜头属性</button></nav>
     <div className="trk-gm-workspace">
-      <aside className="trk-gm-layers" aria-label="图层和地名">
-        <div className="trk-gm-panel-title"><h3>图层和地名</h3><span>{layers.length} 个</span></div>
-        <button type="button" className="trk-gm-layer" aria-pressed={selectedLayer === 'camera'} onClick={() => {setSelectedLayer('camera'); setPanel('properties')}}><span>相机镜头</span><small>{keys.length} 个关键帧</small></button>
-        <div className="trk-gm-layer-list">{layers.map(node => <div className="trk-gm-layer-row" key={node.id}>
-          <input aria-label={`显示图层：${node.name}`} type="checkbox" checked={node.visible} disabled={locked || node.locked} onChange={event => layerPatch({visible: event.target.checked}, node.id)}/>
-          <button type="button" className="trk-gm-layer" aria-pressed={selectedLayer === node.id} onClick={() => {setSelectedLayer(node.id); setPanel('properties')}}><span>{node.name}</span><small>{node.type === 'marker' ? '地名' : node.type === 'route' ? '轨迹' : node.type === 'text' ? '文字' : '图层'}</small></button>
-        </div>)}</div>
-        <button type="button" className="trk-gm-rebuild" disabled={!currentImport || locked || saving || loadState !== 'ready'} onClick={requestRebuild}>基于当前轨迹新建工程</button>
+      <aside className="trk-gm-layers" aria-label="图层和地名" aria-hidden={focusPreview || undefined}>
+        <div className="trk-gm-panel-title"><h3><ShotWorkbenchIcon name="layers"/>图层和地名</h3><span>{layerQuery.trim() ? visibleLayers.length + ' / ' : ''}{layers.length} 个</span></div>
+        <label className="trk-gm-layer-search"><ShotWorkbenchIcon name="search"/><input type="search" aria-label="搜索图层" placeholder="搜索图层和地名" value={layerQuery} disabled={recording} onChange={event => setLayerQuery(event.target.value)}/></label>
+        <button type="button" className="trk-gm-layer trk-gm-camera-layer" aria-pressed={selectedLayer === 'camera'} onClick={() => {setSelectedLayer('camera'); setPanel('properties'); setFocusPreview(false)}}><ShotWorkbenchIcon name="camera"/><span>相机镜头</span><small>{keys.length} 个关键帧</small></button>
+        <div className="trk-gm-layer-list">{visibleLayers.map(node => <div className="trk-gm-layer-row" data-layer-type={node.type} data-selected={selectedLayer === node.id || undefined} key={node.id}>
+          <label className="trk-gm-layer-visibility" title={node.visible ? '隐藏图层：' + node.name : '显示图层：' + node.name}>
+            <input aria-label={'显示图层：' + node.name} type="checkbox" checked={node.visible} disabled={locked || node.locked} onChange={event => layerPatch({visible: event.target.checked}, node.id)}/>
+            <ShotWorkbenchIcon name={node.visible ? 'eye' : 'eye-off'} size={14}/>
+          </label>
+          <button type="button" className="trk-gm-layer" title={node.name} aria-pressed={selectedLayer === node.id} onClick={() => {setSelectedLayer(node.id); setPanel('properties'); setFocusPreview(false)}}><ShotWorkbenchIcon name={node.type === 'marker' ? 'pin' : node.type === 'route' ? 'route' : node.type === 'text' ? 'text' : 'layers'} size={14}/><span>{node.name}</span><small>{node.type === 'marker' ? '地名' : node.type === 'route' ? '轨迹' : node.type === 'text' ? '文字' : '图层'}</small></button>
+        </div>)}{!visibleLayers.length && layerQuery.trim() && <p className="trk-gm-search-empty" role="status">没有匹配的图层</p>}</div>
+        <div className="trk-gm-layer-footer"><button type="button" className="trk-gm-rebuild" disabled={!currentImport || locked || saving || loadState !== 'ready'} onClick={requestRebuild}><ShotWorkbenchIcon name="reset"/>基于当前轨迹新建工程</button></div>
       </aside>
       <section className="trk-gm-preview" aria-label="镜头地图预览">
-        <div className="trk-gm-mapbar"><BasemapControls className="trk-gm-basemaps" basemap={capture?.basemap || previewBasemap} onBasemap={value => {if (!recording) {onBasemap(value); editProject(document => ({...document, basemap: value}))}}} disabled={locked}/></div>
+        <div className="trk-gm-mapbar"><span className="trk-gm-preview-label">预览 <small>{project?.width || 1280} × {project?.height || 720}</small></span><div className="trk-gm-preview-tools"><BasemapControls className="trk-gm-basemaps" basemap={capture?.basemap || previewBasemap} onBasemap={value => {if (!recording) {onBasemap(value); editProject(document => ({...document, basemap: value}))}}} disabled={locked}/><button type="button" className="trk-gm-icon-button" aria-label={focusPreview ? '恢复三栏布局' : '展开地图预览'} title={focusPreview ? '恢复三栏布局' : '展开地图预览'} aria-pressed={focusPreview} disabled={recording} onClick={() => {setFocusPreview(value => !value); setPanel('preview')}}><ShotWorkbenchIcon name={focusPreview ? 'collapse' : 'expand'}/><span className="trk-gm-sr-only">{focusPreview ? '恢复三栏布局' : '展开地图预览'}</span></button></div></div>
         <div className={`trk-gm-stage${recording ? ' is-recording' : ''}`} style={project ? {aspectRatio: `${project.width} / ${project.height}`} : undefined}>
           {active && project && <GeoMotionScene project={capture?.project || project} time={time} basemap={capture?.basemap || previewBasemap} settings={capture?.settings || preferences} onReady={acceptScene} onCameraChange={cameraChanged}/>}
           {!project && <div className="trk-gm-empty" role="status">{loadState === 'error' ? '请先重新读取工程' : sourceError ? '请先恢复轨迹和地名' : '正在读取轨迹、地名与镜头工程…'}</div>}
           {recording && <div className="trk-gm-capture-mask" aria-hidden="true"/>}
         </div>
-        <div className="trk-gm-preview-help"><span>{cameraMoved ? '当前构图尚未记录' : '拖动地图调整位置，滚轮缩放，右键拖动旋转'}</span><button type="button" disabled={!ready || locked} onClick={recordCamera}>记录当前构图（K）</button></div>
+        <div className="trk-gm-preview-help"><span>{cameraMoved ? '当前构图尚未记录' : '拖动地图调整位置，滚轮缩放，右键拖动旋转'}</span><button type="button" disabled={!ready || locked} onClick={recordCamera}><ShotWorkbenchIcon name="camera"/>记录当前构图（K）</button></div>
         {recording && <div className="trk-gm-progress" role="status"><label>视频导出 <progress max={progress.total || 1} value={progress.completed}/></label><span>{progress.completed} / {progress.total} 帧</span><button type="button" onClick={() => exporter.current?.abort()}>取消导出</button></div>}
         {video && <div className="trk-gm-video"><video controls playsInline src={video.url} aria-label="导出视频预览"/><a href={video.url} download={video.filename}>下载视频</a>{video.identity && <ShotResultUpload key={video.identity.takeId} blob={video.blob} identity={video.identity} scope={scope} revision={revision} dirty={dirty} active={active} disabled={recording || saving || playing} onBusy={setUploading} onUploaded={onShotResult} initialState={video.uploadState} onState={state => captureStore?.updateUpload(video.identity!, state)}/>}</div>}
       </section>
-      <aside className="trk-gm-properties" aria-label="镜头属性">
-        <div className="trk-gm-panel-title"><h3>{selectedLayer === 'camera' ? '相机关键帧' : activeLayer?.type === 'marker' ? '地名属性' : '图层属性'}</h3></div>
+      <aside className="trk-gm-properties" aria-label="镜头属性" aria-hidden={focusPreview || undefined}>
+        <div className="trk-gm-panel-title"><h3><ShotWorkbenchIcon name={selectedLayer === 'camera' ? 'camera' : 'settings'}/>{selectedLayer === 'camera' ? '相机关键帧' : activeLayer?.type === 'marker' ? '地名属性' : '图层属性'}</h3><span>{selectedLayer === 'camera' ? round(activeKey?.t || 0) + ' 秒' : ''}</span></div>
+        <div className="trk-gm-inspector-body">{activeLayer && <p className="trk-gm-selected-name" title={activeLayer.name}>{activeLayer.name}</p>}
         {selectedLayer === 'camera' ? <>
-          <label>选择关键帧<select aria-label="选择相机关键帧" value={activeKey?.id || ''} disabled={!keys.length || locked} onChange={event => {setSelectedKey(event.target.value); const key = keys.find(value => value.id === event.target.value); if (key) seek(key.t)}}>{keys.map(key => <option key={key.id} value={key.id}>{round(key.t)} 秒</option>)}</select></label>
+          <label className="trk-gm-field">选择关键帧<select aria-label="选择相机关键帧" value={activeKey?.id || ''} disabled={!keys.length || locked} onChange={event => {setSelectedKey(event.target.value); const key = keys.find(value => value.id === event.target.value); if (key) seek(key.t)}}>{keys.map(key => <option key={key.id} value={key.id}>{round(key.t)} 秒</option>)}</select></label>
           {activeKey && <fieldset disabled={locked}><legend>构图参数</legend>
             <NumberField label="关键帧时间（秒）" value={activeKey.t} min={0} max={duration} step={.1} onValue={t => keyPatch({t})}/>
             <div className="trk-gm-two"><NumberField label="经度" value={activeKey.center[0]} min={-180} max={180} step={.0001} onValue={value => keyPatch({center: [value, activeKey.center[1]]})}/><NumberField label="纬度" value={activeKey.center[1]} min={-85} max={85} step={.0001} onValue={value => keyPatch({center: [activeKey.center[0], value]})}/></div>
-            <NumberField label="缩放级别" value={activeKey.zoom} min={0} max={22} step={.1} onValue={zoom => keyPatch({zoom})}/>
-            <div className="trk-gm-two"><NumberField label="朝向（度）" value={activeKey.bearing} min={-3600} max={3600} step={1} onValue={bearing => keyPatch({bearing})}/><NumberField label="俯仰（度）" value={activeKey.pitch} min={0} max={85} step={1} onValue={pitch => keyPatch({pitch})}/></div>
-            <label>运动缓动<select aria-label="运动缓动" value={activeKey.easing} onChange={event => keyPatch({easing: event.target.value as GeoKeyframe['easing']})}>{easeOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
-            <NumberField label="途中拉远幅度" value={activeKey.dip} min={0} max={6} step={.1} onValue={dip => keyPatch({dip})}/>
-            <button type="button" disabled={keys.length <= 1} onClick={() => {editProject(value => geoRemoveCameraKey(value, activeKey.id)); setSelectedKey('')}}>删除此关键帧</button>
+            <RangeNumberField label="缩放级别" value={activeKey.zoom} min={0} max={22} step={.1} onValue={zoom => keyPatch({zoom})}/>
+            <RangeNumberField label="朝向（度）" value={activeKey.bearing} min={-3600} max={3600} step={1} onValue={bearing => keyPatch({bearing})}/><RangeNumberField label="俯仰（度）" value={activeKey.pitch} min={0} max={85} step={1} onValue={pitch => keyPatch({pitch})}/>
+            <label className="trk-gm-field">运动缓动<select aria-label="运动缓动" value={activeKey.easing} onChange={event => keyPatch({easing: event.target.value as GeoKeyframe['easing']})}>{easeOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
+            <RangeNumberField label="途中拉远幅度" value={activeKey.dip} min={0} max={6} step={.1} onValue={dip => keyPatch({dip})}/>
+            <button type="button" className="trk-gm-delete-key" disabled={keys.length <= 1} onClick={() => {editProject(value => geoRemoveCameraKey(value, activeKey.id)); setSelectedKey('')}}>删除此关键帧</button>
           </fieldset>}
         </> : activeLayer && <fieldset disabled={locked || activeLayer.locked}><legend>图层显示</legend>
-          <label>图层名称<input aria-label="图层名称" value={activeLayer.name} onChange={event => layerPatch({name: event.target.value})}/></label>
-          {activeLayer.type === 'marker' && <label>地名文字<input aria-label="地名文字" value={activeLayer.label} onChange={event => layerPatch({label: event.target.value})}/></label>}
-          {activeLayer.type === 'text' && <label>文字内容<textarea aria-label="文字内容" value={activeLayer.text} onChange={event => layerPatch({text: event.target.value})}/></label>}
+          <label className="trk-gm-field">图层名称<input aria-label="图层名称" value={activeLayer.name} onChange={event => layerPatch({name: event.target.value})}/></label>
+          {activeLayer.type === 'marker' && <label className="trk-gm-field">地名文字<input aria-label="地名文字" value={activeLayer.label} onChange={event => layerPatch({label: event.target.value})}/></label>}
+          {activeLayer.type === 'text' && <label className="trk-gm-field">文字内容<textarea aria-label="文字内容" value={activeLayer.text} onChange={event => layerPatch({text: event.target.value})}/></label>}
           <NumberField label="开始显示（秒）" value={activeLayer.in} min={0} max={activeLayer.out} step={.1} onValue={value => layerPatch({in: value})}/>
           <NumberField label="结束显示（秒）" value={activeLayer.out} min={activeLayer.in} max={duration} step={.1} onValue={value => layerPatch({out: value})}/>
           <NumberField label="淡入淡出（秒）" value={activeLayer.fade} min={0} max={duration} step={.1} onValue={fade => layerPatch({fade})}/>
           <label className="trk-gm-checkbox"><input type="checkbox" aria-label="显示当前图层" checked={activeLayer.visible} onChange={event => layerPatch({visible: event.target.checked})}/>显示图层</label>
         </fieldset>}
-        <details className="trk-gm-output" open><summary>工程与输出</summary><fieldset disabled={locked || !project}>
+        <details className="trk-gm-output"><summary>工程与输出</summary><fieldset disabled={locked || !project}>
           <NumberField label="镜头时长（秒）" value={duration} min={1} max={300} step={1} onValue={value => {editProject(document => geoResizeDuration(document, value)); seek(Math.min(time, value))}}/>
-          <label>画面尺寸<select aria-label="画面尺寸" value={`${project?.width || 1280}x${project?.height || 720}`} onChange={event => {const [width, height] = event.target.value.split('x').map(Number); editProject(value => ({...value, width, height}))}}><option value="1280x720">横屏 1280 × 720</option><option value="1920x1080">横屏 1920 × 1080</option><option value="720x1280">竖屏 720 × 1280</option></select></label>
-          <label>视频帧率<select aria-label="视频帧率" value={project?.fps || 30} onChange={event => editProject(value => ({...value, fps: Number(event.target.value)}))}><option value={24}>24 帧 / 秒</option><option value={30}>30 帧 / 秒</option><option value={60}>60 帧 / 秒</option></select></label>
+          <label className="trk-gm-field">画面尺寸<select aria-label="画面尺寸" value={`${project?.width || 1280}x${project?.height || 720}`} onChange={event => {const [width, height] = event.target.value.split('x').map(Number); editProject(value => ({...value, width, height}))}}><option value="1280x720">横屏 1280 × 720</option><option value="1920x1080">横屏 1920 × 1080</option><option value="720x1280">竖屏 720 × 1280</option></select></label>
+          <label className="trk-gm-field">视频帧率<select aria-label="视频帧率" value={project?.fps || 30} onChange={event => editProject(value => ({...value, fps: Number(event.target.value)}))}><option value={24}>24 帧 / 秒</option><option value={30}>30 帧 / 秒</option><option value={60}>60 帧 / 秒</option></select></label>
           <label className="trk-gm-checkbox"><input type="checkbox" aria-label="三维地形" checked={project?.terrain || false} onChange={event => editProject(value => ({...value, terrain: event.target.checked}))}/>三维地形</label>
           <NumberField label="地形起伏倍数" value={project?.terrainExaggeration || 1} min={1} max={3} step={.05} onValue={terrainExaggeration => editProject(value => ({...value, terrainExaggeration}))}/>
-        </fieldset></details>
+        </fieldset></details></div>
       </aside>
     </div>
   </ShotWorkbench>
 }
 
 function NumberField({label, value, min, max, step = .1, onValue, disabled = false}: {label: string; value: number; min?: number; max?: number; step?: number; onValue: (value: number) => void; disabled?: boolean}) {
-  return <label>{label}<input aria-label={label} type="number" min={min} max={max} step={step} value={round(value, 5)} disabled={disabled} onChange={event => {const value = event.target.valueAsNumber; if (Number.isFinite(value) && (min === undefined || value >= min) && (max === undefined || value <= max)) onValue(value)}}/></label>
+  return <label className="trk-gm-field">{label}<input aria-label={label} type="number" min={min} max={max} step={step} value={round(value, 5)} disabled={disabled} onChange={event => {const value = event.target.valueAsNumber; if (Number.isFinite(value) && (min === undefined || value >= min) && (max === undefined || value <= max)) onValue(value)}}/></label>
+}
+
+/** Same bounded camera value through both the scrub control and numeric entry. */
+function RangeNumberField({label, value, min, max, step = .1, onValue}: {label: string; value: number; min: number; max: number; step?: number; onValue: (value: number) => void}) {
+  const id = useId()
+  const change = (event: ChangeEvent<HTMLInputElement>) => {const next = event.target.valueAsNumber; if (Number.isFinite(next) && next >= min && next <= max) onValue(next)}
+  return <div className="trk-gm-field trk-gm-range-field"><label htmlFor={id}>{label}</label><div className="trk-gm-range-controls"><input type="range" aria-label={label + '滑杆'} min={min} max={max} step="any" value={round(value, 5)} onChange={change}/><input id={id} aria-label={label} type="number" min={min} max={max} step={step} value={round(value, 5)} onChange={change}/></div></div>
 }

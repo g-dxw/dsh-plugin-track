@@ -22,6 +22,7 @@ const scaleWithin = (value: number) => clamp(value, 1, 800)
 const rounded = (value: number) => Number(value.toFixed(3))
 const layerKind = (type: string) => type === 'route' ? '轨迹' : type === 'marker' ? '地名' : type === 'text' ? '字幕' : type === 'image' ? '图片' : type === 'shape' ? '区域' : type === 'source' ? '源轨迹' : '图层'
 const validFps = (fps: number) => Number.isFinite(fps) && fps > 0 ? fps : 30
+const RULER_HEIGHT = 24, ROW_HEIGHT = 32
 function clock(time: number, fps: number) {
   const rate = validFps(fps), frame = Math.round(time * rate), seconds = Math.floor(frame / rate)
   return `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}:${String(Math.round(frame - seconds * rate)).padStart(2, '0')}`
@@ -30,13 +31,12 @@ function clock(time: number, fps: number) {
 /** One time coordinate system governs independent key lanes and every layer. */
 export function GeoMotionTimeline(props: GeoMotionTimelineProps) {
   const [snap, setSnap] = useState(true), [showHidden, setShowHidden] = useState(false)
-  const [manualScale, setManualScale] = useState(50), [fit, setFit] = useState(true), [viewportWidth, setViewportWidth] = useState(900)
+  const [manualScale, setManualScale] = useState(50), [fit, setFit] = useState(true), [viewportWidth, setViewportWidth] = useState(900), [gutter, setGutter] = useState(220)
   const [ghost, setGhost] = useState<Ghost | null>(null), [notice, setNotice] = useState('')
   const pendingScroll = useRef<number | null>(null)
   const viewport = useRef<HTMLDivElement>(null), plot = useRef<HTMLDivElement>(null), dragging = useRef<Drag | null>(null)
   const latest = useRef(props), latestGhost = useRef(ghost), live = useRef(true)
   latest.current = props; latestGhost.current = ghost
-  const gutter = viewportWidth < 500 ? 116 : 156
   const duration = Number.isFinite(props.duration) && props.duration > 0 ? props.duration : 1
   const pxPerSecond = fit ? Math.max(.0001, viewportWidth - gutter - 18) / duration : manualScale
   const plotWidth = Math.max(1, duration * pxPerSecond)
@@ -72,7 +72,15 @@ export function GeoMotionTimeline(props: GeoMotionTimelineProps) {
     const cancel = () => cancelDrag('已取消时间轴调整，原位置保留')
     const escape = (event: KeyboardEvent) => {if (event.key === 'Escape' && dragging.current) {event.preventDefault(); cancel()}}
     window.addEventListener('blur', cancel); window.addEventListener('keydown', escape)
-    const resized = () => {const width = viewport.current?.clientWidth || viewport.current?.getBoundingClientRect().width; if (width && Number.isFinite(width)) setViewportWidth(width)}
+    const resized = () => {
+      const element = viewport.current, width = element?.clientWidth || element?.getBoundingClientRect().width
+      if (!width || !Number.isFinite(width)) return
+      const workspace = element?.closest<HTMLElement>('.trk-gm')
+      const sidebarWidth = workspace ? Number.parseFloat(getComputedStyle(workspace).getPropertyValue('--trk-gm-sidebar-width')) : NaN
+      // The label column shares the editor sidebar width, while narrow workspaces retain room for the tracks.
+      const labelWidth = width <= 850 ? 140 : Number.isFinite(sidebarWidth) && sidebarWidth > 0 ? sidebarWidth : workspace && width < 1100 ? 190 : 220
+      setViewportWidth(width); setGutter(labelWidth)
+    }
     const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(resized)
     if (viewport.current) observer?.observe(viewport.current)
     window.addEventListener('resize', resized); resized()
@@ -173,10 +181,10 @@ export function GeoMotionTimeline(props: GeoMotionTimelineProps) {
     <style>{GEOMOTION_TIMELINE_CSS}</style>
     <div className="trk-gm-tl-toolbar">
       <div className="trk-gm-tl-transport">
-        <button type="button" disabled={props.disabled} onClick={props.onPlayPause}>{props.playing ? '暂停' : '播放'}</button>
-        <button type="button" disabled={props.disabled} onClick={() => props.onSeek(0)} title="回到开头">回到开头</button>
+        <button type="button" className="trk-gm-tl-play" disabled={props.disabled} onClick={props.onPlayPause}><svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">{props.playing ? <path d="M4 3h3v10H4zm5 0h3v10H9z"/> : <path d="m4 2 9 6-9 6z"/>}</svg><span>{props.playing ? '暂停' : '播放'}</span></button>
+        <button type="button" className="trk-gm-tl-start" disabled={props.disabled} onClick={() => props.onSeek(0)} title="回到开头"><svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M2 3h2v10H2zm11 0v10L5 8z"/></svg><span>回到开头</span></button>
         <label className="trk-gm-tl-time">时间<input aria-label="当前时间（秒）" type="number" min={0} max={duration} step={1 / validFps(props.fps)} value={rounded(props.time)} disabled={props.disabled} onChange={event => {const value = event.currentTarget.valueAsNumber; if (Number.isFinite(value)) props.onSeek(timelineSnapTime(value, props.fps, duration, snap))}}/><span>秒</span></label>
-        <output className="trk-gm-tl-clock" aria-label="镜头播放状态">{clock(props.time, props.fps)} / {clock(duration, props.fps)}{props.recording ? ' · 正在导出' : props.playing ? ' · 正在播放' : ''}</output>
+        <output className="trk-gm-tl-clock" aria-label="镜头播放状态"><span>{clock(props.time, props.fps)}</span><span className="trk-gm-tl-clock-duration"> / {clock(duration, props.fps)}</span>{props.recording ? ' · 正在导出' : props.playing ? ' · 正在播放' : ''}</output>
       </div>
       <div className="trk-gm-tl-tools">
         <button type="button" disabled={props.editDisabled || props.disabled || !keyLanes.length} onClick={() => props.keyLanes ? props.onAddKey(selectedLane) : props.onAddKey()}>添加关键帧</button>
@@ -191,7 +199,7 @@ export function GeoMotionTimeline(props: GeoMotionTimelineProps) {
       </div>
     </div>
     <div ref={viewport} className="trk-gm-tl-scroll" aria-label="多轨时间轴" tabIndex={0}>
-      <div className="trk-gm-tl-content" style={{gridTemplateColumns: `${gutter}px ${plotWidth}px`, width: gutter + plotWidth + 18, minHeight: 30 + visibleRows * 40}}>
+      <div className="trk-gm-tl-content" style={{gridTemplateColumns: `${gutter}px ${plotWidth}px`, width: gutter + plotWidth + 18, minHeight: RULER_HEIGHT + visibleRows * ROW_HEIGHT}}>
         <div className="trk-gm-tl-label trk-gm-tl-ruler-label"><span>图层</span><small>{layers.length + keyLanes.length} 条轨道</small></div>
         <div ref={plot} className="trk-gm-tl-ruler" aria-label="时间刻度" onPointerDown={event => begin(event, 'seek')} {...pointerHandlers}>
           {ticks.map(tick => <div key={`${tick.time}:${tick.major}`} className={`trk-gm-tl-tick${tick.major ? ' is-major' : ''}${tick.time >= duration - .000001 ? ' is-endpoint' : ''}`} style={{left: tick.time * pxPerSecond}} aria-hidden="true">{tick.major && (tick.time === 0 || tick.time >= duration - .000001 || (duration - tick.time) * pxPerSecond >= 60) && <span>{tick.label}</span>}</div>)}

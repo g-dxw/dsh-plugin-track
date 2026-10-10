@@ -17,6 +17,7 @@ import { api, clipboardSafeName, download } from './util.ts'
 import {storeAnnotationImage, type AnnotationImageSnapshot} from './annotation-resource.ts'
 import {getArtElementStyle, getArtTextStyle, getArtRouteStyle, getArtBackground, validateArtStyles, type ArtStyles} from '../track/art-styles.ts'
 import {ElementStyleControls, TextStyleControls, GlobalStyleControls} from './ArtStyleControls.tsx'
+import {ART_LAYOUT_CSS} from './track-art-layout-css.ts'
 
 const CANVAS_PRESETS=[{id:'4:3',label:'4:3 横版',width:1200,height:900},{id:'1:1',label:'1:1 方形',width:1200,height:1200},{id:'16:9',label:'16:9 宽屏',width:1600,height:900},{id:'3:4',label:'3:4 竖版',width:900,height:1200},{id:'9:16',label:'9:16 竖屏',width:900,height:1600}]
 type ArtDraft = {annotations:TrackAnnotation[];layout:ArtLayout;route:ArtRouteTransform;canvas:ArtCanvasSize;styles:ArtStyles}
@@ -213,20 +214,46 @@ export function TrackArt({track,onCancel,embedded=false,active:isActive=true,onS
   const textLabel=ART_TEXT_LABELS.find(item=>item.id===selectedTextId)?.label||''
   const markerPosition=active?annotationPosition(active,track.coordinates):[0,0]
   const photoPosition=active?.photo?annotationPhotoLayouts(displayedAnnotations,track.coordinates,styles).find(item=>item.annotation.id===active.id):null
-  return <section className="trk-art" onKeyDownCapture={event=>{if(!isActive){event.preventDefault();event.stopPropagation()}}}>
-    <style>{ART_CSS}</style>
-    <header className="trk-art-head"><div><h2>{embedded?'SVG 标注':'轨迹标注'}</h2><p className="trk-muted">{track.name} · 点位信息同步自「标注点编辑」，在此调整标记样式、排版位置和图片布局；画布保存与 PNG 资源入库分别操作。</p></div><div className="trk-art-actions">
-      {!embedded&&<button className="trk-secondary" disabled={saving||photoBusy} onClick={()=>dirty?setDiscard(true):onCancel()}>返回概览</button>}
-      <button className="trk-secondary" disabled={disabled||!drawing.svg||Boolean(nameInvalid)} onClick={()=>download(`${clipboardSafeName(track.name)}-轨迹标注.svg`,exportArtwork(),'image/svg+xml')}>导出 SVG</button>
-      <button className="trk-secondary" disabled={disabled||!drawing.svg} onClick={()=>download(`${clipboardSafeName(track.name)}-纯轨迹.svg`,routeSvg(track.coordinates,{theme:'paper',styles}),'image/svg+xml')}>导出轨迹 SVG</button>
-      <button className="trk-secondary" disabled={disabled||!drawing.svg||Boolean(nameInvalid)} onClick={()=>void saveImageToLibrary()}>{saving&&savingTarget==='image'?'入库中…':'保存到资源库'}</button>
-      <button className="trk-primary" disabled={disabled||!dirty||Boolean(nameInvalid)} onClick={()=>void save()}>{saving&&savingTarget==='canvas'?'保存中…':'保存画布'}</button>
-    </div></header>
+  return <section className={`trk-art${embedded?' trk-art-embedded':''}`} aria-label="SVG 标注工作台" onKeyDownCapture={event=>{if(!isActive){event.preventDefault();event.stopPropagation()}}}>
+    <style>{ART_CSS+ART_LAYOUT_CSS}</style>
+    {!embedded&&<header className="trk-art-head"><div><h2>轨迹标注</h2><p className="trk-muted">{track.name}</p></div><button className="trk-secondary" disabled={saving||photoBusy} onClick={()=>dirty?setDiscard(true):onCancel()}>返回概览</button></header>}
     {!embedded&&discard&&<div className="trk-progress" role="alert">画布有未保存的修改。<button className="trk-secondary" onClick={()=>setDiscard(false)}>继续编辑</button><button className="trk-secondary" onClick={onCancel}>放弃草稿</button></div>}
     {error&&<div className="trk-error" role="alert">{error}{!ready&&<button className="trk-secondary" disabled={loading} onClick={()=>void loadAnnotations()}>重试读取点位</button>}</div>}
     {pendingImage&&<div className="trk-progress" role="status">上次导出的 PNG 尚未加入资源库。<button className="trk-secondary" disabled={saving||photoBusy} onClick={()=>void saveImageToLibrary(pendingImage)}>重试添加 PNG</button></div>}
     {sourceError&&<div className="trk-error" role="alert">{sourceError}<button className="trk-secondary" onClick={()=>void refreshSource()} disabled={sourceLoading}>重试读取点位</button></div>}
-    {note&&<p className="trk-muted" role="status">{note}</p>}
+    {note&&<p className="trk-muted trk-art-status" role="status">{note}</p>}
+    <div className="trk-art-toolbar" role="group" aria-label="画布工具"><div className="trk-art-tool-group" role="group" aria-label="编辑操作">
+      <button className="trk-secondary" disabled={disabled} aria-pressed={canvasTool==='select'&&!adding} onClick={()=>{setCanvasTool('select');setAdding(false)}}>选择 / 移动</button>
+      <button className="trk-secondary" disabled={disabled} aria-pressed={canvasTool==='pan'} onClick={()=>{setCanvasTool('pan');setAdding(false);closeDrawer()}}>拖动轨迹</button>
+      <button className="trk-secondary" disabled={disabled} aria-pressed={styleDrawer} onClick={()=>{closeDrawer();setStyleDrawer(true);setAdding(false);setCanvasTool('select')}}>统一样式</button>
+      <button className="trk-secondary" disabled={disabled} aria-pressed={textDrawer} onClick={()=>{setCanvasTool('select');selectText(selectedTextId||'title')}}>画布文字</button>
+      <button className="trk-secondary" disabled={disabled||annotations.length>=100} aria-pressed={adding} onClick={startAdd}>添加点位</button>
+      </div><div className="trk-art-tool-group trk-art-history-tools" role="group" aria-label="画布历史">
+      <button className="trk-secondary" disabled={disabled||!history.past.length} onClick={undo}>撤销</button><button className="trk-secondary" disabled={disabled||!history.future.length} onClick={redo}>重做</button>
+      </div><div className="trk-art-tool-group trk-art-view-tools" role="group" aria-label="画布视图">
+      <label>轨迹缩放<select aria-label="轨迹缩放" disabled={disabled} value={zoom} onChange={event=>camera.current?.zoom(Number(event.target.value)/100)}>{[...new Set([25,50,75,100,125,150,200,400,zoom])].sort((a,b)=>a-b).map(value=><option key={value} value={value}>{value}%</option>)}</select></label>
+      <button className="trk-secondary" disabled={disabled} onClick={resetView}>重置轨迹</button>
+      </div>
+      {adding&&<><button className="trk-secondary" onClick={()=>add(routePosition(0))} disabled={disabled}>添加到路线起点</button><button className="trk-secondary" onClick={()=>{setAdding(false);setNote('')}}>取消添加</button></>}
+      <details className="trk-art-help"><summary>操作提示</summary><p>拖动文字、标记或照片调整位置 · 拖动空白区域移动轨迹 · 双击添加点位 · 方向键微调</p></details>
+    </div>
+    <div className="trk-art-workspace">
+      <ArtCanvasViewport ref={camera} background={getArtBackground(styles)} aspectRatio={canvas.width/canvas.height} view={route} disabled={disabled||!isActive} panning={canvasTool==='pan'} adding={adding} onViewChange={view=>{routePreview.current=view;overlay.current?.setRouteView(view)}} onViewCommit={view=>commit(annotations,layout,view)} onScaleChange={scale=>setZoom(Math.round(scale*10000)/100)} overlay={drawing.error?<div className="trk-error">{drawing.error}</div>:<AnnotationCanvas trackId={track.id} ref={overlay} route={route} svg={drawing.svg} points={track.coordinates} annotations={displayedAnnotations} layout={layout} styles={styles} onLayoutChange={next=>commit(annotations,next)} onTextSelect={selectText} onChange={commitDisplayed} onSelect={select} onAdd={add} adding={adding} panning={canvasTool==='pan'} managedPan disabled={disabled||!isActive}/>}>
+        {drawing.routeSvg&&<div dangerouslySetInnerHTML={{__html:drawing.routeSvg}}/>}
+      </ArtCanvasViewport>
+      <aside className="trk-art-sidebar" aria-label="标记点位" aria-hidden={drawer||textDrawer||styleDrawer||undefined}>
+        <fieldset className="trk-art-files" disabled={disabled||drawer||textDrawer||styleDrawer} aria-label="画布保存与导出">
+          <div className="trk-art-files-head"><strong>画布文件</strong><span className={draftDirty?'trk-art-unsaved':'trk-muted'} role="status">{loading||sourceLoading?'读取中…':!ready||sourceError?'未就绪':draftDirty?'未保存':'已保存'}</span></div>
+          <div className="trk-art-file-actions">
+      <button className="trk-primary" disabled={disabled||!dirty||Boolean(nameInvalid)} onClick={()=>void save()}>{saving&&savingTarget==='canvas'?'保存中…':'保存画布'}</button>
+      <button className="trk-secondary" disabled={disabled||!drawing.svg||Boolean(nameInvalid)} onClick={()=>void saveImageToLibrary()}>{saving&&savingTarget==='image'?'入库中…':'保存到资源库'}</button>
+          </div>
+          <details className="trk-art-export-options"><summary tabIndex={drawer||textDrawer||styleDrawer?-1:0}>导出文件</summary><div className="trk-art-export-actions">
+      <button className="trk-secondary" disabled={disabled||!drawing.svg||Boolean(nameInvalid)} onClick={()=>download(`${clipboardSafeName(track.name)}-轨迹标注.svg`,exportArtwork(),'image/svg+xml')}>导出 SVG</button>
+      <button className="trk-secondary" disabled={disabled||!drawing.svg} onClick={()=>download(`${clipboardSafeName(track.name)}-纯轨迹.svg`,routeSvg(track.coordinates,{theme:'paper',styles}),'image/svg+xml')}>导出轨迹 SVG</button>
+          </div><p className="trk-muted trk-art-export-note">导出与资源库图片仅保留轨迹线、标记、配图和连接线。</p></details>
+        </fieldset>
+        <details className="trk-art-canvas-settings"><summary tabIndex={drawer||textDrawer||styleDrawer?-1:0}>画布设置 <span className="trk-muted">{canvas.width} × {canvas.height}</span></summary><fieldset disabled={disabled||drawer||textDrawer||styleDrawer}>
     <div className="trk-art-size" role="group" aria-label="画布设置">
       <label>画布比例<select aria-label="画布比例" disabled={disabled} value={CANVAS_PRESETS.find(item=>Math.abs(item.width/item.height-canvas.width/canvas.height)<.002)?.id??'custom'} onChange={event=>{const preset=CANVAS_PRESETS.find(item=>item.id===event.target.value);if(preset)applyCanvas({width:preset.width,height:preset.height})}}>{CANVAS_PRESETS.map(item=><option key={item.id} value={item.id}>{item.label}</option>)}<option value="custom">自定义</option></select></label>
       <label>宽度<input aria-label="画布宽度" type="number" min={240} max={4096} step={1} value={widthDraft} disabled={disabled} onChange={event=>setWidthDraft(event.target.value)}/></label>
@@ -235,24 +262,8 @@ export function TrackArt({track,onCancel,embedded=false,active:isActive=true,onS
       <button className="trk-secondary" disabled={disabled} onClick={()=>applyCanvas(canvas)}>适配画布</button><span className="trk-muted">{canvas.width} × {canvas.height} px</span>
     </div>
     {sizeError&&<p className="trk-error" role="alert">{sizeError}</p>}
-    <p className="trk-muted trk-art-export-note">导出与资源库图片仅保留轨迹线、标记、配图和连接线。</p>
-    <div className="trk-art-toolbar" role="group" aria-label="画布工具">
-      <button className="trk-secondary" disabled={disabled} aria-pressed={canvasTool==='select'&&!adding} onClick={()=>{setCanvasTool('select');setAdding(false)}}>选择 / 移动</button>
-      <button className="trk-secondary" disabled={disabled} aria-pressed={canvasTool==='pan'} onClick={()=>{setCanvasTool('pan');setAdding(false);closeDrawer()}}>拖动轨迹</button>
-      <button className="trk-secondary" disabled={disabled} aria-pressed={styleDrawer} onClick={()=>{closeDrawer();setStyleDrawer(true);setAdding(false);setCanvasTool('select')}}>统一样式</button>
-      <button className="trk-secondary" disabled={disabled} aria-pressed={textDrawer} onClick={()=>{setCanvasTool('select');selectText(selectedTextId||'title')}}>画布文字</button>
-      <button className="trk-secondary" disabled={disabled||annotations.length>=100} aria-pressed={adding} onClick={startAdd}>添加点位</button>
-      <button className="trk-secondary" disabled={disabled||!history.past.length} onClick={undo}>撤销</button><button className="trk-secondary" disabled={disabled||!history.future.length} onClick={redo}>重做</button>
-      <label>轨迹缩放<select aria-label="轨迹缩放" disabled={disabled} value={zoom} onChange={event=>camera.current?.zoom(Number(event.target.value)/100)}>{[...new Set([25,50,75,100,125,150,200,400,zoom])].sort((a,b)=>a-b).map(value=><option key={value} value={value}>{value}%</option>)}</select></label>
-      <button className="trk-secondary" disabled={disabled} onClick={resetView}>重置轨迹</button>
-      {adding&&<><button className="trk-secondary" onClick={()=>add(routePosition(0))} disabled={disabled}>添加到路线起点</button><button className="trk-secondary" onClick={()=>{setAdding(false);setNote('')}}>取消添加</button></>}
-      <span className="trk-muted">拖动文字、标记或照片调整位置 · 拖动空白区域移动轨迹 · 双击添加点位 · 方向键微调</span>
-    </div>
-    <div className="trk-art-workspace">
-      <ArtCanvasViewport ref={camera} background={getArtBackground(styles)} aspectRatio={canvas.width/canvas.height} view={route} disabled={disabled||!isActive} panning={canvasTool==='pan'} adding={adding} onViewChange={view=>{routePreview.current=view;overlay.current?.setRouteView(view)}} onViewCommit={view=>commit(annotations,layout,view)} onScaleChange={scale=>setZoom(Math.round(scale*10000)/100)} overlay={drawing.error?<div className="trk-error">{drawing.error}</div>:<AnnotationCanvas trackId={track.id} ref={overlay} route={route} svg={drawing.svg} points={track.coordinates} annotations={displayedAnnotations} layout={layout} styles={styles} onLayoutChange={next=>commit(annotations,next)} onTextSelect={selectText} onChange={commitDisplayed} onSelect={select} onAdd={add} adding={adding} panning={canvasTool==='pan'} managedPan disabled={disabled||!isActive}/>}>
-        {drawing.routeSvg&&<div dangerouslySetInnerHTML={{__html:drawing.routeSvg}}/>}
-      </ArtCanvasViewport>
-      <aside className="trk-art-sidebar" aria-label="标记点位" aria-hidden={drawer||textDrawer||styleDrawer||undefined}>
+
+        </fieldset></details>
         <div className="trk-art-sidebar-head"><h3>标记点位 <small>{visibleCount} / {displayedAnnotations.length} 显示</small></h3><button className="trk-secondary" tabIndex={drawer||textDrawer||styleDrawer?-1:0} disabled={disabled||annotations.length>=100} onClick={startAdd}>＋ 添加</button></div>
         <div className="trk-art-point-list" ref={list}>
           {loading||sourceLoading?<p className="trk-muted" role="status">正在读取点位…</p>:sourceError?<p className="trk-muted">点位显示状态未读取，请重试。</p>:displayedAnnotations.length?displayedAnnotations.map((item,index)=><button key={item.id} data-point-id={item.id} tabIndex={drawer||textDrawer||styleDrawer?-1:0} className="trk-art-point" aria-pressed={selectedId===item.id} disabled={disabled} onClick={()=>select(item.id)}><span className="trk-point-number" style={{background:getArtElementStyle(item,styles).markerColor,color:getArtElementStyle(item,styles).numberColor}}>{index+1}</span><span><strong>{item.label}</strong><small>{annotationVisible(item)?'画布已显示':'画布已隐藏'} · {item.photo?annotationVisible(item)?'已展示照片':'照片随点位隐藏':item.imageUrls?.length?`${item.imageUrls.length} 张可选图片`:'未添加图片'}</small></span><span aria-hidden="true">›</span></button>):<div className="trk-art-empty">还没有标记点位<br/>点击「添加点位」，在左侧画布放置标记。</div>}

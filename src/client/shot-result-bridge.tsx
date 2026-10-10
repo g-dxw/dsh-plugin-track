@@ -78,7 +78,14 @@ export function ShotResultUpload({blob, identity, scope, revision, dirty, active
       if (alive.current) {setBusy(false); latestBusy.current(false)}
     }
   }
-  return <div className="trk-gm-shot-result"><button type="button" disabled={busy || !active || !matches || disabled || complete} onClick={() => void upload()}>{busy ? '正在回填…' : complete ? '已回填分镜素材' : '回填当前分镜素材'}</button>
+  return <div className="trk-gm-shot-result"><style>{SHOT_RESULT_CSS}</style><button type="button" disabled={busy || !active || !matches || disabled || complete} onClick={() => void upload()}>{busy ? '正在回填…' : complete ? '已回填分镜素材' : '回填当前分镜素材'}</button>
     {busy && <button type="button" onClick={() => request.current?.abort()}>取消回填</button>}
     <p role="status" aria-live="polite">{status || (!matches ? '工程或分镜已变化，请保存并重新输出后回填；当前视频仍可下载。' : '回填将关联本次输出的工程版本。')}</p></div>
 }
+
+const SHOT_RESULT_CSS=`
+.trk-gm-shot-result{display:flex;align-items:center;flex-wrap:wrap;gap:6px;min-width:0;padding:8px 0;margin-top:8px;border-top:1px solid var(--trk-border);color:var(--trk-text);font-size:var(--trk-ui-font-size,13px)}
+.trk-gm-shot-result button{min-height:var(--trk-control-height,32px);padding:4px 9px;border:1px solid var(--trk-border);border-radius:var(--trk-radius-sm,5px);background:var(--trk-surface);color:var(--trk-text);font:inherit;font-size:var(--trk-ui-label-size,12px);white-space:normal;overflow-wrap:anywhere;cursor:pointer}.trk-gm-shot-result button:disabled{opacity:.5;cursor:not-allowed}.trk-gm-shot-result button:hover:not(:disabled){background:var(--trk-hover)}.trk-gm-shot-result button:focus-visible{outline:2px solid var(--trk-focus);outline-offset:2px}
+.trk-gm-shot-result p{flex-basis:100%;margin:0;color:var(--trk-muted);font-size:var(--trk-ui-label-size,12px);line-height:1.5;overflow-wrap:anywhere}
+@container geomotion (max-width:850px){.trk-gm-shot-result button{min-height:44px}.trk-gm-shot-result{gap:8px}}
+`

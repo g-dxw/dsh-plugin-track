@@ -438,7 +438,7 @@ describe('settings dialog and standalone map preferences', () => {
     const onBasemap = vi.fn()
     await act(async () => root.render(createElement(BasemapControls, {basemap: 'terrain', onBasemap})))
     const compact = node.querySelector<HTMLSelectElement>('select[aria-label="地图源"]')!
-    expect(compact.value).toBe('terrain'); expect(compact.style.minHeight).toBe('44px')
+    expect(compact.value).toBe('terrain'); expect(compact.style.minHeight).toBe('var(--trk-input-height,30px)')
     expect([...compact.options].map(option => option.value)).toEqual(['vector', 'terrain', 'satellite', 'none', 'osm', 'maptiler-streets', 'maptiler-outdoor', 'maptiler-satellite', 'retry-current'])
     expect([...compact.options].filter(option => option.value.startsWith('maptiler-')).every(option => option.disabled)).toBe(true)
     await select(compact, 'retry-current'); expect(onBasemap).toHaveBeenLastCalledWith('terrain')

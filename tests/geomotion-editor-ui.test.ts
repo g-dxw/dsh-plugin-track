@@ -195,7 +195,7 @@ describe('native GeoMotion workspace', () => {
     await render(); const previous = JSON.stringify(current())
     expect(node.querySelector('h2')!.textContent).toBe('镜头编辑')
     expect(node.querySelector('.trk-gm-context')!.textContent).toContain('地图场景')
-    expect(node.querySelector('.trk-gm-mapbar > [data-testid="basemap-controls"]')!.className).toBe('trk-gm-basemaps')
+    expect(node.querySelector('.trk-gm-preview-tools > [data-testid="basemap-controls"]')!.className).toBe('trk-gm-basemaps')
     expect([...node.querySelectorAll('button')].some(item => item.textContent?.includes('案例'))).toBe(false)
     const tools = node.querySelector<HTMLDetailsElement>('.trk-gm-file-tools')!
     expect(tools.open).toBe(false); expect(tools.querySelector('summary')!.textContent).toBe('工程文件')

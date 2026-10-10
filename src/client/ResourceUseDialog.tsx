@@ -40,6 +40,6 @@ export function ResourceUseDialog({track,asset,onClose,onSaved}:{track:TrackReco
     {!points.loading&&points.editReady&&!points.points.length&&<p className="trk-muted">此轨迹还没有标注点，请先在轨迹编辑中添加。</p>}
     {(error||points.error||points.stateError||points.editError)&&<p className="trk-error" role="alert">{error||points.error||points.stateError||points.editError}</p>}
     {(points.error||points.stateError)&&<button type="button" className="trk-secondary" disabled={busy} onClick={points.retry}>重新读取点位</button>}
-    <footer style={{display:'flex',gap:8,justifyContent:'flex-end',marginTop:20}}><button type="button" className="trk-secondary" disabled={busy} onClick={onClose}>取消</button><button type="button" className="trk-primary" disabled={busy||points.loading||!points.editReady||!target} onClick={()=>void save()}>{busy?'正在保存…':'添加照片'}</button></footer>
+    <footer style={{display:'flex',gap:8,justifyContent:'flex-end',marginTop:10}}><button type="button" className="trk-secondary" disabled={busy} onClick={onClose}>取消</button><button type="button" className="trk-primary" disabled={busy||points.loading||!points.editReady||!target} onClick={()=>void save()}>{busy?'正在保存…':'添加照片'}</button></footer>
   </div></div>
 }

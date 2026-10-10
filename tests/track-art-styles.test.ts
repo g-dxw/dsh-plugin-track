@@ -38,6 +38,11 @@ afterEach(async()=>{await act(async()=>root.unmount());node.remove();vi.restoreA
 async function render(props:Partial<ComponentProps<typeof TrackArt>>={}) {await act(async()=>{root.render(createElement(TrackArt,{track,basemap:'none',onBasemap:vi.fn(),onCancel:vi.fn(),...props}));await new Promise(resolve=>setTimeout(resolve,5))})}
 function button(text:string) {const value=[...node.querySelectorAll<HTMLButtonElement>('button')].find(item=>item.textContent===text);if(!value)throw new Error(`Missing button ${text}`);return value}
 async function click(text:string) {await act(async()=>button(text).click())}
+async function exportSvg() {
+  const details=node.querySelector<HTMLDetailsElement>('.trk-art-export-options')!
+  if(!details.open)await act(async()=>details.querySelector('summary')!.click())
+  await click('导出 SVG')
+}
 async function labeledButton(label:string) {await act(async()=>{const value=node.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`);if(!value)throw new Error(`Missing button ${label}`);value.click()})}
 async function select(id='a') {await act(async()=>node.querySelector<HTMLButtonElement>(`[data-point-id="${id}"]`)!.click())}
 async function field(label:string,value:string) {
@@ -51,6 +56,18 @@ function label(id='a') {return node.querySelector(`[data-annotation-id="${id}"] 
 function marker(id='a') {return node.querySelector(`[data-annotation-id="${id}"] [data-art-style="marker"]`)!}
 function parse(svg:string) {return new DOMParser().parseFromString(svg,'image/svg+xml')}
 function echoSave() {vi.mocked(api).mockImplementation(async(_action,data)=>data as never)}
+function expectCoveredSidebar() {
+  const sidebar=node.querySelector<HTMLElement>('.trk-art-sidebar')!
+  expect(sidebar.getAttribute('aria-hidden')).toBe('true')
+  for(const control of sidebar.querySelectorAll<HTMLElement>('button,input,select,summary')) {
+    expect(control.matches(':disabled')||control.tabIndex<0,control.outerHTML).toBe(true)
+  }
+  const active=document.activeElement
+  button('保存到资源库').focus()
+  expect(document.activeElement).toBe(active)
+  node.querySelector<HTMLInputElement>('[aria-label="画布宽度"]')!.focus()
+  expect(document.activeElement).toBe(active)
+}
 
 describe('SVG editing unified and independent styles',()=>{
   it('applies global text and relative offsets while retaining independently styled labels',async()=>{
@@ -86,7 +103,7 @@ describe('SVG editing unified and independent styles',()=>{
   })
   it('stores style edits in undo and redo history and restores the initial clean state',async()=>{
     await render();expect(button('保存画布').disabled).toBe(true)
-    await click('统一样式');await field('统一字号','30')
+    await click('统一样式');await field('统一字号','30');await click('完成调整')
     expect(label().getAttribute('font-size')).toBe('30');expect(button('保存画布').disabled).toBe(false)
     await click('撤销');expect(label().getAttribute('font-size')).toBe('17');expect(button('保存画布').disabled).toBe(true)
     await click('重做');expect(label().getAttribute('font-size')).toBe('30');expect(button('保存画布').disabled).toBe(false)
@@ -107,7 +124,7 @@ describe('SVG editing unified and independent styles',()=>{
   it('exports the current unsaved styles consistently to SVG and resource PNG snapshots',async()=>{
     await render();await click('统一样式');await field('统一字号','27');await field('统一文字颜色值','#234567')
     await field('统一轨迹颜色值','#00aa88');await field('统一轨迹宽度','10');await field('统一图片宽度','400');await field('统一图片圆角','20')
-    await click('导出 SVG');const exported=vi.mocked(download).mock.calls.at(-1)![1] as string
+    await click('完成调整');await exportSvg();const exported=vi.mocked(download).mock.calls.at(-1)![1] as string
     await click('保存到资源库');expect(storeAnnotationImage).toHaveBeenCalledOnce()
     const snapshot=vi.mocked(storeAnnotationImage).mock.calls[0][0]
     expect(snapshot).toMatchObject({trackId:track.id,name:`${track.name}-SVG 标注.png`,svg:exported})
@@ -128,13 +145,13 @@ describe('SVG editing unified and independent styles',()=>{
     await click('统一样式');await field('统一背景颜色值','#224466')
     expect(scene.style.backgroundColor).toBe('rgb(34, 68, 102)')
     expect(getComputedStyle(scene).backgroundColor).toBe('rgb(34, 68, 102)')
-    await click('导出 SVG')
+    await click('完成调整');await exportSvg()
     let exported=parse(vi.mocked(download).mock.calls.at(-1)![1] as string)
     expect(exported.querySelector('[data-art-layer="background"]')?.getAttribute('fill')).toBe('#224466')
     await click('撤销')
     expect(scene.style.backgroundColor).toBe('rgb(255, 253, 246)')
     expect(button('保存画布').disabled).toBe(true)
-    await click('导出 SVG')
+    await exportSvg()
     exported=parse(vi.mocked(download).mock.calls.at(-1)![1] as string)
     expect(exported.querySelector('[data-art-layer="background"]')?.getAttribute('fill')).toBe('#fffdf6')
     await click('重做');expect(scene.style.backgroundColor).toBe('rgb(34, 68, 102)')
@@ -151,14 +168,16 @@ describe('SVG editing unified and independent styles',()=>{
       expect(button('保存画布').disabled).toBe(true)
     }
     await act(async()=>input.blur())
-    expect(transform()).toBe('translate(-120 0) scale(1)');expect(button('保存画布').disabled).toBe(false)
+    expect(transform()).toBe('translate(-120 0) scale(1)')
+    expect(node.querySelector('.trk-art-files [role="status"]')?.textContent).toBe('未保存')
+    expect(button('保存画布').matches(':disabled')).toBe(true)
     await act(async()=>input.focus());await type('');await act(async()=>input.blur())
     expect(input.getAttribute('aria-invalid')).toBe('true');expect(transform()).toBe('translate(-120 0) scale(1)')
     await act(async()=>input.focus());await type('-5')
     await act(async()=>input.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true})))
     expect(node.querySelector<HTMLInputElement>('[aria-label="整组轨迹横坐标"]')?.value).toBe('-120')
     expect(transform()).toBe('translate(-120 0) scale(1)')
-    echoSave();await click('保存画布')
+    echoSave();await click('完成调整');await click('保存画布')
     const payload=vi.mocked(api).mock.calls.at(-1)![1] as {route:{x:number;y:number;scale:number}}
     expect(payload.route).toEqual({x:-120,y:0,scale:1})
   })
@@ -192,12 +211,46 @@ describe('SVG editing unified and independent styles',()=>{
     vi.mocked(api).mockResolvedValue({annotations:stored,saved:true})
     vi.mocked(loadTrackPlacemarkState).mockResolvedValue({points:sources,groups:[group]})
     await render();expect(node.querySelector('[data-point-id="hidden"]')).toBeNull();expect(node.querySelector('[data-point-id="b"]')).toBeNull()
-    await click('统一样式');await field('统一字号','23');echoSave();await click('保存画布')
+    await click('统一样式');await field('统一字号','23');await click('完成调整');echoSave();await click('保存画布')
     const payload=vi.mocked(api).mock.calls.at(-1)![1] as {annotations:TrackAnnotation[];styles:ArtStyles}
     expect(payload.styles).toMatchObject({defaults:{textSize:23}})
     expect(payload.annotations.find(item=>item.id==='b')?.style).toEqual(stored[0].style)
     expect(payload.annotations.find(item=>item.id==='hidden')?.style).toEqual(stored[1].style)
     expect(payload.annotations.find(item=>item.id===group.id)?.style).toEqual(stored[2].style)
     expect(label(group.id).getAttribute('font-size')).toBe('23');expect(label(group.id).getAttribute('fill')).toBe('#aa6600')
+  })
+  it('focuses the point drawer, removes covered sidebar controls from keyboard access and returns to its selected row',async()=>{
+    await render()
+    const row=node.querySelector<HTMLButtonElement>('[data-point-id="a"]')!
+    await act(async()=>{
+      for(const details of node.querySelectorAll<HTMLDetailsElement>('.trk-art-sidebar details'))details.open=true
+      row.focus();row.click()
+    })
+    expect(document.activeElement).toBe(node.querySelector('[aria-label="点位名称"]'))
+    expectCoveredSidebar()
+    await click('完成编辑')
+    expect(node.querySelector('[role="dialog"]')).toBeNull()
+    expect(document.activeElement).toBe(row)
+    expect(row.tabIndex).toBe(0)
+    expect(node.querySelector('.trk-art-sidebar')?.getAttribute('aria-hidden')).toBeNull()
+    expect(button('保存到资源库').matches(':disabled')).toBe(false)
+    expect(node.querySelector<HTMLElement>('.trk-art-export-options summary')!.tabIndex).toBe(0)
+    expect(node.querySelector<HTMLElement>('.trk-art-canvas-settings summary')!.tabIndex).toBe(0)
+  })
+  it('returns focus to the stable toolbar trigger after closing the style or text drawer with Escape',async()=>{
+    await render()
+    for(const [name,initialFocus] of [
+      ['统一样式','#trk-art-style-title'],
+      ['画布文字','[aria-label="画布文字选择"]'],
+    ]) {
+      const trigger=button(name)
+      await act(async()=>{trigger.focus();trigger.click()})
+      expect(document.activeElement).toBe(node.querySelector(initialFocus))
+      expectCoveredSidebar()
+      await act(async()=>node.querySelector('[role="dialog"]')!.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true})))
+      expect(node.querySelector('[role="dialog"]')).toBeNull()
+      expect(document.activeElement).toBe(trigger)
+      expect(button('保存到资源库').matches(':disabled')).toBe(false)
+    }
   })
 })

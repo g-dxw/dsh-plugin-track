@@ -2,7 +2,7 @@
 import {act, createElement} from 'react'
 import {createRoot, type Root} from 'react-dom/client'
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest'
-import {MapView} from '../src/client/MapView.tsx'
+import {MapView, type MapResourceCaptureControls} from '../src/client/MapView.tsx'
 import {DEFAULT_MAP_SETTINGS, writeMapSettings} from '../src/track/map-settings.ts'
 import type {TrackPlacemark, TrackPoint} from '../src/protocol.ts'
 import type {TerrainGrid} from '../src/track/sandbox/types.ts'
@@ -149,8 +149,97 @@ async function click(label: string) {await act(async () => {button(label).click(
 function captureOptions() {return state.capture.mock.calls.at(-1)![0] as {canvas: HTMLCanvasElement; markers?: HTMLElement[]; credits?: unknown; background?: string}}
 function deferred<T>() {let resolve!: (value: T) => void; let reject!: (reason: Error) => void; const promise = new Promise<T>((yes, no) => {resolve = yes; reject = no}); return {promise, resolve, reject}}
 async function sandboxReady() {await act(async () => {state.pending.at(-1)!.resolve(RESULT)})}
+function externalControls(receiver: ReturnType<typeof vi.fn>): MapResourceCaptureControls {
+  const controls = receiver.mock.calls.at(-1)?.[0] as MapResourceCaptureControls | null | undefined
+  if (!controls) throw new Error('External capture controls unavailable')
+  return controls
+}
 
 describe('map view saves the selected image to its track resource library', () => {
+  it('reports disabled external controls for unsaved tracks, point positioning and unavailable WebGL', async () => {
+    const changes = vi.fn()
+    await render({trackId: undefined, onResourceCaptureChange: changes})
+    expect(externalControls(changes).disabled).toBe(true); expect(externalControls(changes).disabledReason).toContain('请先保存轨迹')
+    expect(findButton('保存到资源库')).toBeUndefined()
+    await act(async () => {await externalControls(changes).save()})
+    await render({onPickPlacemark: vi.fn(), onResourceCaptureChange: changes})
+    expect(externalControls(changes).disabled).toBe(true); expect(externalControls(changes).disabledReason).toContain('完成地图定位')
+    await act(async () => {await externalControls(changes).save()})
+    await act(async () => {root!.unmount()}); root = createRoot(container); state.noWebGL = true
+    await render({onResourceCaptureChange: changes})
+    expect(externalControls(changes).disabled).toBe(true); expect(externalControls(changes).disabledReason).toContain('WebGL')
+    await act(async () => {await externalControls(changes).save()})
+    expect(state.capture).not.toHaveBeenCalled(); expect(state.store).not.toHaveBeenCalled()
+  })
+
+  it('saves through stable external actions using the current rendered 2D or 3D frame without a duplicate overlay', async () => {
+    const changes = vi.fn()
+    await render({placemarks: PLACEMARKS, onResourceCaptureChange: changes})
+    const controls = externalControls(changes), map = state.maps[0]; map.autoRender = false
+    expect(controls.disabled).toBe(false); expect(findButton('保存到资源库')).toBeUndefined()
+    await act(async () => {void controls.save()})
+    expect(externalControls(changes).busy).toBe(true); expect(externalControls(changes).disabled).toBe(true)
+    expect(state.capture).not.toHaveBeenCalled()
+    await act(async () => {map.emit('render')})
+    expect(state.store).toHaveBeenCalledWith('track-a', expect.any(String), 'map', png)
+    expect(captureOptions().markers?.map(marker => marker.dataset.placemarkId)).toEqual(['visible'])
+    expect(externalControls(changes).notice).toBe('二维地图已保存到资源库'); expect(externalControls(changes).busy).toBe(false)
+    await click('3D 地图'); map.autoRender = true
+    expect(externalControls(changes).save).toBe(controls.save); expect(externalControls(changes).retry).toBe(controls.retry)
+    await act(async () => {await controls.save()})
+    expect(state.store).toHaveBeenLastCalledWith('track-a', expect.any(String), 'terrain', png)
+    expect(JSON.stringify(captureOptions().credits)).toContain('Mapterhorn')
+    expect(externalControls(changes).notice).toBe('3D 地图已保存到资源库')
+    expect(container.querySelector('.trk-map-export-tools')).toBeNull()
+  })
+
+  it('reports external sandbox readiness and captures its current rendered pixels', async () => {
+    const changes = vi.fn(); await render({onResourceCaptureChange: changes})
+    const save = externalControls(changes).save
+    await click('3D 沙盘'); expect(externalControls(changes).disabled).toBe(true)
+    expect(externalControls(changes).disabledReason).toContain('沙盘加载')
+    await act(async () => {await save()}); expect(state.capture).not.toHaveBeenCalled()
+    await sandboxReady(); expect(externalControls(changes).disabled).toBe(false)
+    await act(async () => {await save()})
+    expect(captureOptions().canvas).toBe(state.sandboxes[0].canvas); expect(state.sandboxes[0].renderFrame).toHaveBeenCalled()
+    expect(captureOptions().markers?.length ?? 0).toBe(0)
+    expect(state.store).toHaveBeenCalledWith('track-a', expect.any(String), 'sandbox', png)
+    expect(externalControls(changes).notice).toBe('3D 沙盘已保存到资源库')
+  })
+
+  it('retries the original PNG externally while a new sandbox cannot yet be captured', async () => {
+    const changes = vi.fn(); state.store.mockRejectedValueOnce(new Error('资源库连接中断'))
+    await render({onResourceCaptureChange: changes}); await act(async () => {await externalControls(changes).save()})
+    const controls = externalControls(changes), original = state.store.mock.calls[0]
+    expect(controls.error).toBe('资源库连接中断'); expect(controls.retryAvailable).toBe(true)
+    await click('3D 沙盘'); expect(externalControls(changes).disabled).toBe(true); expect(externalControls(changes).busy).toBe(false)
+    await act(async () => {await controls.retry()})
+    expect(state.capture).toHaveBeenCalledTimes(1); expect(state.store.mock.calls[1]).toEqual(original)
+    expect(externalControls(changes).notice).toBe('二维地图已保存到资源库'); expect(externalControls(changes).retryAvailable).toBe(false)
+  })
+
+  it('clears old track retry state while cached external actions read the latest track', async () => {
+    const changes = vi.fn(); state.store.mockRejectedValueOnce(new Error('资源库连接中断'))
+    await render({onResourceCaptureChange: changes}); const controls = externalControls(changes)
+    await act(async () => {await controls.save()}); expect(externalControls(changes).retryAvailable).toBe(true)
+    await render({trackId: 'track-b', name: '海岸轨迹', onResourceCaptureChange: changes})
+    expect(externalControls(changes).error).toBe(''); expect(externalControls(changes).notice).toBe(''); expect(externalControls(changes).retryAvailable).toBe(false)
+    expect(externalControls(changes).save).toBe(controls.save)
+    await act(async () => {await controls.retry()}); expect(state.store).toHaveBeenCalledTimes(1)
+    await act(async () => {await controls.save()})
+    expect(state.store).toHaveBeenLastCalledWith('track-b', expect.stringContaining('海岸轨迹'), 'map', png)
+  })
+
+  it('releases external controls on unmount and makes cached actions harmless after disposal', async () => {
+    const changes = vi.fn(); await render({onResourceCaptureChange: changes})
+    const controls = externalControls(changes), map = state.maps[0]; map.autoRender = false
+    await act(async () => {void controls.save()}); expect(externalControls(changes).busy).toBe(true)
+    await act(async () => {root!.unmount()}); root = null
+    expect(changes).toHaveBeenLastCalledWith(null); expect(map.handlers.get('render')).toHaveLength(0)
+    await act(async () => {await controls.save(); await controls.retry(); map.emit('render')})
+    expect(state.capture).not.toHaveBeenCalled(); expect(state.store).not.toHaveBeenCalled()
+  })
+
   it('requires a saved track and disables capture while picking a placemark or without WebGL', async () => {
     await render({trackId: undefined}); expect(findButton('保存到资源库')).toBeUndefined()
     await render({onPickPlacemark: vi.fn()}); expect(button('保存到资源库').disabled).toBe(true)

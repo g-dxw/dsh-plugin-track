@@ -26,6 +26,17 @@ import {RESOURCE_MAP_VIEW_LABELS, type ResourceMapView} from '../track/resources
 
 type MapViewMode = ResourceMapView
 type MapImageSnapshot = {trackId: string; name: string; view: ResourceMapView; png: Blob}
+export interface MapResourceCaptureControls {
+  busy: boolean
+  /** Disables a new capture; retrying an existing PNG only needs to respect busy. */
+  disabled: boolean
+  disabledReason: string
+  notice: string
+  error: string
+  retryAvailable: boolean
+  save: () => Promise<void>
+  retry: () => Promise<void>
+}
 type CameraState = {center: [number, number]; zoom: number; pitch: number; bearing: number}
 type Sampling = {controller: AbortController; basemapFailed: boolean}
 
@@ -33,7 +44,7 @@ const NO_PLACEMARKS: readonly TrackPlacemark[] = []
 const NO_GROUPS: readonly PlacemarkGroup[] = []
 const NO_EXPANDED_GROUPS: ReadonlySet<string> = new Set()
 type MapPlacemark = TrackPlacemark & {markerLabel: string; groupCount?: number}
-export function MapView({points, name, trackId, basemap, onBasemap, placemarks = NO_PLACEMARKS, placemarkGroups = NO_GROUPS, expandedPlacemarkGroups = NO_EXPANDED_GROUPS, placemarkTypeFilter = 'all', onPlacemarkTypeFilterChange, placemarkDisplayControlsDisabled = false, selectedPlacemark = null, onSelectPlacemark, onClosePlacemark, onMovePlacemark, onEditPlacemark, onPlacemarkDragChange, placemarkEditingDisabled = false, segmentStarts, onPickPlacemark}: {
+export function MapView({points, name, trackId, basemap, onBasemap, placemarks = NO_PLACEMARKS, placemarkGroups = NO_GROUPS, expandedPlacemarkGroups = NO_EXPANDED_GROUPS, placemarkTypeFilter = 'all', onPlacemarkTypeFilterChange, placemarkDisplayControlsDisabled = false, selectedPlacemark = null, onSelectPlacemark, onClosePlacemark, onMovePlacemark, onEditPlacemark, onPlacemarkDragChange, placemarkEditingDisabled = false, segmentStarts, onPickPlacemark, onResourceCaptureChange}: {
   points: readonly TrackPoint[]
   trackId?: string
   segmentStarts?: readonly number[]
@@ -54,6 +65,8 @@ export function MapView({points, name, trackId, basemap, onBasemap, placemarks =
   onEditPlacemark?: (id: string) => void
   onPlacemarkDragChange?: (active: boolean) => void
   placemarkEditingDisabled?: boolean
+  /** A stable receiver moves capture controls out of the map; null releases them on unmount. */
+  onResourceCaptureChange?: (controls: MapResourceCaptureControls | null) => void
 }) {
   const {settings} = useMapSettings()
   const liveSettings = useRef(settings); liveSettings.current = settings
@@ -118,6 +131,7 @@ export function MapView({points, name, trackId, basemap, onBasemap, placemarks =
   const [exportNotice, setExportNotice] = useState('')
   const [exportError, setExportError] = useState('')
   const [pendingExport, setPendingExport] = useState<MapImageSnapshot | null>(null)
+  const exportStateTrack = useRef(trackId)
   const exportEpoch = useRef(0)
   const exportTask = useRef<{epoch: number; controller: AbortController; capturing: boolean} | null>(null)
   const exportView = useRef({trackId, view, basemap, settings})
@@ -126,6 +140,7 @@ export function MapView({points, name, trackId, basemap, onBasemap, placemarks =
     exportEpoch.current++
     exportTask.current?.controller.abort(new Error('轨迹已变化，请重新导出'))
     exportTask.current = null
+    exportStateTrack.current = trackId
     setExportBusy(false); setExportNotice(''); setExportError(''); setPendingExport(null)
     return () => {
       exportEpoch.current++
@@ -189,6 +204,38 @@ export function MapView({points, name, trackId, basemap, onBasemap, placemarks =
       if (current()) {exportTask.current = null; setExportBusy(false)}
     }
   }
+
+  // External controls keep their action identities while reading the current map and retry PNG.
+  const captureMounted = useRef(true)
+  const captureHandlers = useRef({save: async () => {}, retry: async () => {}})
+  captureHandlers.current = {
+    save: () => saveMapImage(),
+    retry: async () => {if (pendingExport && pendingExport.trackId === trackId) await saveMapImage(pendingExport)},
+  }
+  const captureReceiver = useRef(onResourceCaptureChange); captureReceiver.current = onResourceCaptureChange
+  const captureActions = useMemo(() => ({
+    save: async () => {if (captureMounted.current) await captureHandlers.current.save()},
+    retry: async () => {if (captureMounted.current) await captureHandlers.current.retry()},
+  }), [])
+  const currentExportState = exportStateTrack.current === trackId
+  const captureBusy = currentExportState && exportBusy
+  const captureDisabledReason = !trackId ? '请先保存轨迹，再保存地图图片'
+    : captureBusy ? '正在保存地图图片，请稍候'
+    : noWebGL ? '当前设备没有可用的 WebGL，无法导出地图图片'
+    : onPickPlacemark ? '完成地图定位后可导出图片'
+    : view === 'sandbox' && loading ? '等待 3D 沙盘加载完成后再保存'
+    : view === 'sandbox' && sandboxError ? '请先恢复 3D 沙盘，再保存地图图片' : ''
+  const captureControls = useMemo<MapResourceCaptureControls>(() => ({
+    busy: captureBusy, disabled: !!captureDisabledReason, disabledReason: captureDisabledReason,
+    notice: currentExportState ? exportNotice : '', error: currentExportState ? exportError : '',
+    retryAvailable: currentExportState && !!exportError && !!pendingExport && pendingExport.trackId === trackId,
+    ...captureActions,
+  }), [captureBusy, captureDisabledReason, currentExportState, exportNotice, exportError, pendingExport, trackId, captureActions])
+  useEffect(() => {onResourceCaptureChange?.(captureControls)}, [onResourceCaptureChange, captureControls])
+  useEffect(() => {
+    captureMounted.current = true
+    return () => {captureMounted.current = false; captureReceiver.current?.(null)}
+  }, [])
 
   const selectPlacemark = useRef(onSelectPlacemark)
   selectPlacemark.current = onSelectPlacemark
@@ -752,7 +799,7 @@ export function MapView({points, name, trackId, basemap, onBasemap, placemarks =
           <button type="button" aria-pressed={view === 'terrain'} data-track-view="terrain" disabled={noWebGL || !!onPickPlacemark} onClick={() => selectView('terrain')}>3D 地图</button>
           <button type="button" aria-pressed={sandboxVisible} data-track-view="sandbox" disabled={noWebGL || !!onPickPlacemark} title={noWebGL ? '当前设备没有可用的 WebGL' : '查看区域地形和贴地轨迹'} onClick={() => selectView('sandbox')}>3D 沙盘</button>
         </div>
-        {trackId && <div className="trk-map-export-tools">
+        {trackId && !onResourceCaptureChange && <div className="trk-map-export-tools">
           <button type="button" className="trk-map-export-button" disabled={exportBusy || noWebGL || !!onPickPlacemark || (sandboxVisible && (loading || !!sandboxError))}
             title={noWebGL ? '当前设备没有可用的 WebGL，无法导出地图图片' : onPickPlacemark ? '完成地图定位后可导出图片' : '将当前视角保存为 PNG 图片'} onClick={() => void saveMapImage()}>{exportBusy ? '保存中…' : '保存到资源库'}</button>
           {exportNotice && <span className="trk-map-export-notice" role="status">{exportNotice}</span>}
@@ -1057,4 +1104,14 @@ const SANDBOX_CSS = `
 .trk-sandbox-attribution{width:fit-content;max-width:100%;margin-left:auto;box-sizing:border-box;pointer-events:auto;padding:3px 8px;background:var(--trk-overlay);color:var(--trk-text);font-size:calc(var(--trk-font-size)*0.7857)}.trk-sandbox-attribution a{color:inherit}.trk-sandbox-error{z-index:4;display:flex;gap:10px;align-items:center;justify-content:space-between}.trk-sandbox-error button{flex-shrink:0;background:var(--trk-active)}
 @container(max-width:500px){.trk-map-toolbar{gap:5px}.trk-map-toolbar .trk-basebtn{padding:6px 9px}.trk-sandbox-hint{font-size:calc(var(--trk-font-size)*0.7857)}}
 @media(forced-colors:active){.trk-view-tabs,.trk-sandbox-controls{background:Canvas;border-color:ButtonText}.trk-view-tabs button,.trk-sandbox-controls button,.trk-sandbox-error button{color:ButtonText}.trk-view-tabs button[aria-pressed=true]{border:2px solid Highlight}.trk-sandbox-hint,.trk-sandbox-attribution{background:Canvas;color:CanvasText}}
+
+/* GeoMotion workspace chrome; geographic overlays retain their own dimensions. */
+.trk-map-toolbar .trk-view-tabs{gap:2px;padding:3px}.trk-map-toolbar .trk-view-tabs button,.trk-sandbox-controls button,.trk-sandbox-error button,.trk-map-settings-button{min-height:var(--trk-control-height,32px);padding:5px 9px;font-size:var(--trk-ui-label-size,12px)}.trk-map-toolbar .trk-view-tabs button[aria-pressed=true]{color:var(--trk-accent);font-weight:600}.trk-map-toolbar .trk-basebtn{min-height:var(--trk-control-height,32px)}
+.trk-map-export-tools{gap:6px}.trk-map-export-button{min-height:var(--trk-control-height,32px);padding:5px 9px;font-size:var(--trk-ui-label-size,12px)}.trk-map-export-notice{padding:6px 9px;font-size:var(--trk-ui-label-size,12px)}.trk-map-export-notice button{min-height:var(--trk-control-height,32px);padding:4px 7px}
+.trk-sandbox-footer{min-height:var(--trk-control-height,32px)}.trk-sandbox-footer summary{width:var(--trk-control-height,32px);height:var(--trk-control-height,32px)}.trk-sandbox-footer summary svg{width:18px;height:18px}.trk-sandbox-info{margin-bottom:calc(var(--trk-control-height,32px) + 8px);font-size:var(--trk-ui-label-size,12px)}
+.trk-map-wrap .trk-map-native-navigation button.maplibregl-ctrl-zoom-in .maplibregl-ctrl-icon,.trk-map-wrap .trk-map-native-navigation button.maplibregl-ctrl-zoom-out .maplibregl-ctrl-icon{background-image:none;background-color:var(--trk-overlay-text);mask-repeat:no-repeat;mask-position:center;mask-size:16px 16px}.trk-map-wrap .trk-map-native-navigation button.maplibregl-ctrl-zoom-in .maplibregl-ctrl-icon{mask-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 5v14M5 12h14' fill='none' stroke='black' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E")}.trk-map-wrap .trk-map-native-navigation button.maplibregl-ctrl-zoom-out .maplibregl-ctrl-icon{mask-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M5 12h14' fill='none' stroke='black' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E")}
+@container(max-width:750px){.trk-map-toolbar .trk-view-tabs button,.trk-sandbox-controls button,.trk-sandbox-error button,.trk-map-settings-button,.trk-map-export-button,.trk-map-export-notice button{min-height:44px}.trk-sandbox-footer{min-height:44px}.trk-sandbox-footer summary{width:44px;height:44px}.trk-sandbox-info{margin-bottom:52px}}
+@media(pointer:coarse){.trk-map-toolbar .trk-view-tabs button,.trk-sandbox-controls button,.trk-sandbox-error button,.trk-map-settings-button,.trk-map-export-button,.trk-map-export-notice button{min-height:44px}.trk-sandbox-footer{min-height:44px}.trk-sandbox-footer summary{width:44px;height:44px}.trk-sandbox-info{margin-bottom:52px}}
+
+.trk-map-wrap .trk-map-native-navigation button.maplibregl-ctrl-compass .maplibregl-ctrl-icon{background-image:none;background-color:var(--trk-overlay-text);mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='m8 11 4-8 4 8z' fill='black'/%3E%3Cpath d='m8 13 4 8 4-8z' fill='black' opacity='.45'/%3E%3C/svg%3E") center/18px 18px no-repeat}
 `

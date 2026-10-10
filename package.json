@@ -1,6 +1,6 @@
 {
   "name": "cqai-dsh-plugin-track",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "轨迹：二维与 3D 沙盘、卫星底图、分析编辑、SVG 标注和 AI 动画美化",
   "license": "AGPL-3.0-only",
   "type": "module",

@@ -74,8 +74,9 @@ async function recoverRouteContext(track: TrackRecord, points: TrackPlacemark[],
   return validateRouteContext({segmentStarts: parsed.segmentStarts, references: parsed.placemarks || []}, track.coordinates)
 }
 
-export function useTrackPlacemarks(track: TrackRecord, history?: PlacemarkHistory, options: {preparePhotos?: boolean} = {}) {
-  const preparePhotos = options.preparePhotos !== false
+export function useTrackPlacemarks(track: TrackRecord, history?: PlacemarkHistory, options: {preparePhotos?: boolean; deferSave?: boolean} = {}) {
+  const deferSave = options.deferSave === true
+  const preparePhotos = !deferSave && options.preparePhotos !== false
   const [raw, setRaw] = useState({id: track.id, points: track.placemarks || []})
   const [saved, setSaved] = useState({id: track.id, state: emptyDocument(), ready: false})
   const [route, setRoute] = useState<{id: string; context: PlacemarkRouteContext | null; ready: boolean; error: string}>({id: track.id, context: null, ready: false, error: ''})
@@ -91,6 +92,8 @@ export function useTrackPlacemarks(track: TrackRecord, history?: PlacemarkHistor
   const historySnapshot = useSyncExternalStore(historyStore?.subscribe || noSubscription, historyStore?.getSnapshot || emptyHistory, historyStore?.getSnapshot || emptyHistory)
   const rawRef = useRef(raw); rawRef.current = raw
   const savedRef = useRef(saved); savedRef.current = saved
+  const baseline = useRef(saved), draftSession = useRef(0), draftSave = useRef<Promise<boolean> | null>(null)
+  const saveUncertainty = useRef<{before: PlacemarkState; requested: PlacemarkStateData} | null>(null)
   const routeRef = useRef(route); routeRef.current = route
   const loadingRef = useRef(loading); loadingRef.current = loading
   const errorRef = useRef(error); errorRef.current = error
@@ -105,12 +108,28 @@ export function useTrackPlacemarks(track: TrackRecord, history?: PlacemarkHistor
   const routeReady = route.id === track.id && route.ready
   const routeContext = route.id === track.id ? route.context : null
   const points = useMemo(() => !state.added.length && !state.deletedIds.length && !state.edits.length ? orderedPlacemarks(rawPoints, state.order) : effectivePlacemarks(rawPoints, state), [rawPoints, state])
+  function hasDraftChanges() {return deferSave && savedRef.current.id === track.id && baseline.current.id === track.id && baseline.current.ready
+    && !samePlacemarkHistoryValue('state', baseline.current.state, savedRef.current.state)}
+  const dirty = hasDraftChanges()
 
   useEffect(() => {
     const controller = new AbortController()
-    active.current = controller; inFlight.current = false
+    active.current = controller
+    // A refresh or a new props reference must not replace an unsaved local state.
+    if (hasDraftChanges()) {
+      historyStore?.reconcile('state', savedRef.current.state)
+      if (!routeRef.current.ready) void recoverRouteContext(track, rawRef.current.points, controller.signal).then(context => {
+        if (!controller.signal.aborted) publishRoute({id: track.id, context, ready: true, error: ''})
+      }).catch(reason => {
+        if (!controller.signal.aborted) publishRoute({id: track.id, context: null, ready: false,
+          error: reason instanceof Error ? reason.message : '轨迹分段恢复失败，新增和位置调整暂不可用'})
+      })
+      return () => controller.abort()
+    }
+    inFlight.current = false; draftSession.current++; draftSave.current = null; saveUncertainty.current = null
     publishRaw({id: track.id, points: track.placemarks || []}); publishLoading(true); publishError('')
-    publishSaved({id: track.id, state: emptyDocument(), ready: false}); setStateError('')
+    baseline.current = {id: track.id, state: emptyDocument(), ready: false}
+    publishSaved(baseline.current); setStateError('')
     publishRoute({id: track.id, context: null, ready: false, error: ''})
     setSaving(false); setEditing(false); setGrouping(false); setOrderError(''); setEditError(''); setGroupError('')
     const rawRead = loadTrackPlacemarks(track, controller.signal).then(result => {
@@ -127,6 +146,7 @@ export function useTrackPlacemarks(track: TrackRecord, history?: PlacemarkHistor
       const restored = validatePlacemarkState(result?.state, track.coordinates)
       if (!controller.signal.aborted) {
         historyStore?.reconcile('state', restored)
+        baseline.current = {id: track.id, state: restored, ready: true}
         publishSaved({id: track.id, state: restored, ready: true})
       }
       return restored
@@ -148,13 +168,14 @@ export function useTrackPlacemarks(track: TrackRecord, history?: PlacemarkHistor
       }
     })
     return () => controller.abort()
-  }, [track.id, track.placemarks, attempt, historyStore, preparePhotos])
+  }, [track.id, track.placemarks, attempt, historyStore, preparePhotos, deferSave])
 
-  function canWrite() {
+  function canWrite(verifyUncertain = false) {
     const controller = active.current
     return !!controller && !controller.signal.aborted && currentId.current === track.id
       && rawRef.current.id === track.id && savedRef.current.id === track.id && savedRef.current.ready
       && !loadingRef.current && !errorRef.current && !inFlight.current && !pendingWrites.has(track.id)
+      && (!deferSave || !saveUncertainty.current || verifyUncertain)
   }
   function currentPoints() {return effectivePlacemarks(rawRef.current.points, savedRef.current.state)}
   function currentContext() {return savedRef.current.state.routeContext || (routeRef.current.id === track.id ? routeRef.current.context : null)}
@@ -171,6 +192,14 @@ export function useTrackPlacemarks(track: TrackRecord, history?: PlacemarkHistor
     try {requested = validatePlacemarkStateData({...next, routeContext: currentContext()}, track.coordinates)}
     catch (reason) {markError(channel, reason instanceof Error ? reason.message : '标注状态格式无效'); return false}
     if (!action && samePlacemarkHistoryValue('state', previous.state, requested)) return true
+    if (deferSave) {
+      const historyValue = action?.change.kind === 'order' ? requested.order : action?.change.kind === 'edits' ? requested.edits : action?.change.kind === 'groups' ? requested.groups : requested
+      if (action && !store!.complete(action.direction, action.change, historyValue)) {markError(channel, '撤销或重做结果与历史不一致，已清除历史'); return false}
+      if (!action) store?.record({kind: 'state', before: previous.state, after: requested})
+      publishSaved({id: track.id, state: {version: 1, revision: previous.state.revision, ...requested}, ready: true})
+      markError(channel, ''); setStateError('')
+      return true
+    }
     inFlight.current = true; markBusy(channel, true); markError(channel, ''); setStateError('')
     publishSaved({id: track.id, state: {version: 1, revision: previous.state.revision, ...requested}, ready: true})
     const operation = (async () => {
@@ -220,6 +249,84 @@ export function useTrackPlacemarks(track: TrackRecord, history?: PlacemarkHistor
       if (pendingWrites.get(track.id) === operation) pendingWrites.delete(track.id)
       if (!controller.signal.aborted && currentId.current === track.id) {inFlight.current = false; markBusy(channel, false)}
     }
+  }
+
+  function saveDraft(): Promise<boolean> {
+    if (currentId.current !== track.id || savedRef.current.id !== track.id) return Promise.resolve(false)
+    if (draftSave.current) return draftSave.current
+    if (!canWrite(true)) return Promise.resolve(false)
+    if (!deferSave || !hasDraftChanges()) return Promise.resolve(true)
+    const before = baseline.current.state, session = draftSession.current, store = currentHistory.current
+    let requested: PlacemarkStateData
+    try {requested = validatePlacemarkStateData({...savedRef.current.state, routeContext: currentContext()}, track.coordinates)}
+    catch (reason) {setStateError(reason instanceof Error ? reason.message : '标注草稿格式无效'); return Promise.resolve(false)}
+    const unresolved = saveUncertainty.current
+    const isCurrent = () => currentId.current === track.id && draftSession.current === session && !!active.current && !active.current.signal.aborted
+    inFlight.current = true; setSaving(true); setStateError(''); setOrderError(''); setEditError(''); setGroupError('')
+    const operation = (async () => {
+      let restored: PlacemarkState | null = null, failure: unknown = null, uncertain = false, verifyOnly = false
+      // An earlier interrupted write must be checked before another POST is allowed.
+      if (unresolved) {
+        verifyOnly = true
+        try {
+          const result = await api<{state: unknown}>(`placemark-state?id=${encodeURIComponent(track.id)}`)
+          restored = validatePlacemarkState(result?.state, track.coordinates)
+          if (restored.revision === before.revision && samePlacemarkHistoryValue('state', restored, before)) {verifyOnly = false; restored = null}
+          else if (!(restored.revision > before.revision && samePlacemarkHistoryValue('state', restored, unresolved.requested))) {
+            failure = Object.assign(new Error('标注状态已被其他操作更新'), {status: 409})
+          }
+        } catch (reason) {failure = reason; restored = null; uncertain = true}
+      }
+      if (!verifyOnly) {
+        try {
+          const result = await api<{state: unknown}>('placemark-state', {id: track.id, revision: before.revision, data: requested})
+          restored = validatePlacemarkState(result?.state, track.coordinates)
+          if (restored.revision <= before.revision || !samePlacemarkHistoryValue('state', restored, requested)) throw new Error('标注状态保存结果与请求不一致')
+        } catch (reason) {
+          failure = reason
+          try {
+            const result = await api<{state: unknown}>(`placemark-state?id=${encodeURIComponent(track.id)}`)
+            restored = validatePlacemarkState(result?.state, track.coordinates)
+          } catch {restored = null; uncertain = true}
+        }
+      }
+      const conflict = !!failure && typeof failure === 'object' && 'status' in failure && failure.status === 409
+      const confirmed = !!restored && !conflict && restored.revision > before.revision && samePlacemarkHistoryValue('state', restored, requested)
+      if (confirmed) {
+        store?.reconcile('state', clonePlacemarkStateData(restored!))
+        if (isCurrent()) {
+          baseline.current = {id: track.id, state: restored!, ready: true}; saveUncertainty.current = null
+          publishSaved(baseline.current)
+          if (restored!.routeContext) publishRoute({id: track.id, context: restored!.routeContext, ready: true, error: ''})
+        }
+        return isCurrent()
+      }
+      if (isCurrent()) {
+        saveUncertainty.current = uncertain && !conflict ? {before, requested} : null
+        const message = uncertain && !conflict ? '保存结果尚未确定，请再次点击保存核对结果'
+          : conflict ? '标注状态已被其他操作更新，请先核对外部修改；不会覆盖或重新基于外部版本保存'
+          : failure instanceof Error ? failure.message : '保存结果无效'
+        setStateError(`标注草稿未保存：${message}。当前草稿和撤销记录已保留`)
+      }
+      return false
+    })()
+    const completion = operation.finally(() => {
+      if (pendingWrites.get(track.id) === completion) pendingWrites.delete(track.id)
+      if (isCurrent()) {
+        inFlight.current = false; setSaving(false)
+        if (draftSave.current === completion) draftSave.current = null
+      }
+    })
+    draftSave.current = completion; pendingWrites.set(track.id, completion)
+    return completion
+  }
+  function discardDraft(): void {
+    if (!deferSave || currentId.current !== track.id || !baseline.current.ready || baseline.current.id !== track.id || inFlight.current || pendingWrites.has(track.id)) return
+    const restored = {version: 1 as const, revision: baseline.current.state.revision, ...clonePlacemarkStateData(baseline.current.state)}
+    currentHistory.current?.reconcile('state', restored)
+    saveUncertainty.current = null
+    publishSaved({id: track.id, state: restored, ready: true})
+    setStateError(''); setOrderError(''); setEditError(''); setGroupError('')
   }
 
   async function saveOrder(next: string[] | null): Promise<boolean> {
@@ -322,11 +429,14 @@ export function useTrackPlacemarks(track: TrackRecord, history?: PlacemarkHistor
       return await persistState(next, 'edits')
     } catch (reason) {setEditError(reason instanceof Error ? reason.message : '删除标注点失败'); return false}
   }
-  return {points, loading, error, stateError, retry: () => setAttempt(value => value + 1), manualOrder: state.order !== null,
+  return {points, loading, error, stateError, dirty, saveDraft, discardDraft, retry: () => {
+    if (hasDraftChanges()) {setStateError('当前草稿尚未保存，请先保存或放弃后重新读取'); return}
+    setAttempt(value => value + 1)
+  }, manualOrder: state.order !== null,
     orderReady: ready, saving, orderError, saveOrder, editing, editReady: ready, editError, movePhoto, movePoint, movePointTo, updatePoint, createPoint, deletePoints,
     groups: state.groups, groupReady: ready, groupError, grouping, saveGroups, moveGroup,
     routeReady, routeContext, routeError: route.id === track.id ? route.error : '',
-    canUndo: !!historyStore && ready && !loading && !error && !saving && !editing && !grouping && historySnapshot.canUndo,
-    canRedo: !!historyStore && ready && !loading && !error && !saving && !editing && !grouping && historySnapshot.canRedo,
+    canUndo: !!historyStore && ready && !loading && !error && !saving && !editing && !grouping && !saveUncertainty.current && historySnapshot.canUndo,
+    canRedo: !!historyStore && ready && !loading && !error && !saving && !editing && !grouping && !saveUncertainty.current && historySnapshot.canRedo,
     undo: () => replay('undo'), redo: () => replay('redo')}
 }
