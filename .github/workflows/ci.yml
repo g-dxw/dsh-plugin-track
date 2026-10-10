@@ -75,7 +75,7 @@ jobs:
           const version = pkg.version;
           const exactVersion = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?$/u;
           const match = typeof version === 'string' ? exactVersion.exec(version) : null;
-          if (pkg.name !== 'cqai-dsh-plugin-track' || !match) throw new Error('Unexpected package identity or non-exact version.');
+          if (pkg.name !== 'cqai-dsh-plugin-track' || !match || match[0] !== version) throw new Error('Unexpected package identity or non-exact version.');
           const npmTag = match[4] === undefined ? 'latest' : 'beta';
           if (pkg.publishConfig?.tag !== npmTag) throw new Error('publishConfig.tag does not match the stable/prerelease channel.');
           if (process.env.RELEASE_TAG && process.env.RELEASE_TAG !== `v${version}`) throw new Error('Release tag must equal v + package.json version.');
