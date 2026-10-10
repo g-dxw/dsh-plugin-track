@@ -1,0 +1,32 @@
+{
+  "packageName": "cqai-dsh-plugin-track",
+  "displayName": "Track · 轨迹",
+  "summary": "e宝工坊中的轨迹与旅程素材工作台：导入路线，查看二维地图与 3D 沙盘，整理照片，制作可编辑路线图和地图镜头。",
+  "description": "Track 是 e宝工坊 Desktop 的独立轨迹插件，适合整理徒步、旅行路线与沿途素材。\n\n### 主要功能\n\n- 导入 GPX、KML、TCX，查看二维地图、卫星影像、3D 地图与山体沙盘，分析距离、爬升、时长和海拔剖面。\n- 编辑线路，整理标注点、分组与照片；线路修改保存为新的 GPX 副本，保留导入原文件。\n- 排版 SVG 路线图，调整路线、标记、照片和连接线，保存可编辑布局并导出 SVG / PNG。\n- 在旅程资源库管理图片、视频与音频，搜索、预览、加标签，复用地图截图和点位照片。\n- 使用宿主生图服务进行 AI 图片创作，支持参考图、提示词模板、任务历史与草稿恢复。\n- 编辑地图与沙盘镜头，保存相机关键帧和多轨时间轴，输出 WebM；可另行连接本机 OpenMontage 进行视频策划与分镜素材回填。\n\n### 安装与使用\n\n当前版本：0.1.3。需要支持插件的 e宝工坊 Desktop，本版依赖的 DSH 接口包范围为 ^0.1.5-rc.1。采用 0.2.x 接口包的宿主需要相应兼容版本。\n\n在宿主插件管理中添加 `cqai-dsh-plugin-track@0.1.3`，重启后从侧栏「轨迹」进入。\n\n本地轨迹、点位、媒体和已保存工程存储于当前 DSH 数据目录；地图设置与部分草稿另存于对应应用 Profile。在线底图、卫星影像和区域高程需要联网，MapTiler 可选。AI 功能需要宿主提供可用服务。OpenMontage 不随插件内置，需要另行配置本机环境。\n\n当前镜头工作台输出 WebM，整片混剪、旁白与音乐混音、原生 MP4 导出由外部制作流程完成。\n\n### 界面预览\n\n以下为 beta.3 在实际应用中采集的截图。\n\n![轨迹地图、分组照片与海拔剖面](https://raw.githubusercontent.com/g-dxw/dsh-plugin-track/d096053b5ca85a33b0807723e2575596481bbea3/docs/assets/readme/track-overview.jpg)\n\n![3D 山体沙盘](https://raw.githubusercontent.com/g-dxw/dsh-plugin-track/d096053b5ca85a33b0807723e2575596481bbea3/docs/assets/readme/track-sandbox.jpg)\n\n![SVG 路线图与点位照片布局](https://raw.githubusercontent.com/g-dxw/dsh-plugin-track/d096053b5ca85a33b0807723e2575596481bbea3/docs/assets/readme/track-svg.jpg)\n\n![地图镜头与多轨时间轴](https://raw.githubusercontent.com/g-dxw/dsh-plugin-track/d096053b5ca85a33b0807723e2575596481bbea3/docs/assets/readme/track-shot-editor.jpg)\n\n![旅程资源库](https://raw.githubusercontent.com/g-dxw/dsh-plugin-track/d096053b5ca85a33b0807723e2575596481bbea3/docs/assets/readme/track-resource-library.jpg)\n\n[用户指南](https://github.com/g-dxw/dsh-plugin-track/blob/d096053b5ca85a33b0807723e2575596481bbea3/docs/track-user-guide.md) · [发行说明](https://github.com/g-dxw/dsh-plugin-track/releases/tag/v0.1.3) · [问题反馈](https://github.com/g-dxw/dsh-plugin-track/issues)\n\nTrack 采用 AGPL-3.0-only；第三方组件保留各自版权与许可证，详见仓库的 THIRD_PARTY_NOTICES.md。",
+  "categories": [
+    "productivity",
+    "media"
+  ],
+  "keywords": [
+    "轨迹",
+    "徒步",
+    "旅行",
+    "地图",
+    "3D 沙盘",
+    "GPX",
+    "KML",
+    "TCX",
+    "SVG",
+    "路线编辑",
+    "照片标注",
+    "资源库",
+    "地图镜头",
+    "AI 图片",
+    "OpenMontage"
+  ],
+  "repositoryUrl": "https://github.com/g-dxw/dsh-plugin-track",
+  "homepageUrl": "https://github.com/g-dxw/dsh-plugin-track",
+  "compatibilityHosts": [
+    "dsh-desktop"
+  ]
+}

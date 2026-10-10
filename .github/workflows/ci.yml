@@ -1,0 +1,142 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      release_tag:
+        description: Existing release tag to build and validate against package.json
+        required: false
+        default: ''
+        type: string
+    outputs:
+      artifact_name:
+        description: Verified npm package artifact from this run
+        value: ${{ jobs.build.outputs.artifact_name }}
+      filename:
+        description: Verified npm tarball filename
+        value: ${{ jobs.build.outputs.filename }}
+      version:
+        description: Exact package version
+        value: ${{ jobs.build.outputs.version }}
+      npm_tag:
+        description: latest for stable versions, beta for prereleases
+        value: ${{ jobs.build.outputs.npm_tag }}
+      source_commit:
+        description: Checked-out source commit used to build the tarball
+        value: ${{ jobs.build.outputs.source_commit }}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: track-ci-${{ github.workflow }}-${{ inputs.release_tag || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      artifact_name: ${{ format('track-npm-{0}-{1}', github.run_id, github.run_attempt) }}
+      filename: ${{ steps.package.outputs.filename }}
+      version: ${{ steps.metadata.outputs.version }}
+      npm_tag: ${{ steps.metadata.outputs.npm_tag }}
+      source_commit: ${{ steps.metadata.outputs.source_commit }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.release_tag && format('refs/tags/{0}', inputs.release_tag) || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          package-manager-cache: false
+
+      - name: Use pinned npm pack format
+        run: npm install --global npm@12.0.2
+
+      - name: Validate package identity and release tag
+        id: metadata
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { appendFileSync, readFileSync } from 'node:fs';
+          import { execFileSync } from 'node:child_process';
+          const pkg = JSON.parse(readFileSync('package.json', 'utf8'));
+          const version = pkg.version;
+          const exactVersion = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?$/u;
+          const match = typeof version === 'string' ? exactVersion.exec(version) : null;
+          if (pkg.name !== 'cqai-dsh-plugin-track' || !match) throw new Error('Unexpected package identity or non-exact version.');
+          const npmTag = match[4] === undefined ? 'latest' : 'beta';
+          if (pkg.publishConfig?.tag !== npmTag) throw new Error('publishConfig.tag does not match the stable/prerelease channel.');
+          if (process.env.RELEASE_TAG && process.env.RELEASE_TAG !== `v${version}`) throw new Error('Release tag must equal v + package.json version.');
+          const commit = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+          appendFileSync(process.env.GITHUB_OUTPUT, `version=${version}\nnpm_tag=${npmTag}\nsource_commit=${commit}\n`);
+          NODE
+
+      - name: Enable pinned Yarn
+        run: |
+          corepack enable
+          corepack prepare yarn@4.18.0 --activate
+          test "$(corepack yarn --version)" = '4.18.0'
+
+      - name: Install immutable dependencies
+        run: |
+          cmp yarn.lock build-inputs/yarn.lock
+          corepack yarn install --immutable --mode=skip-build
+
+      - name: Typecheck
+        run: corepack yarn typecheck
+
+      - name: Build and verify client bundle
+        run: corepack yarn build
+
+      - name: Test with bounded workers
+        run: corepack yarn test --maxWorkers=2
+
+      - name: Test release tooling
+        run: npm run test:release
+
+      - name: Generate corresponding-source snapshot
+        run: node scripts/generate-source-snapshot.mjs
+
+      - name: Pack and verify the publishable tarball
+        id: package
+        env:
+          EXPECTED_VERSION: ${{ steps.metadata.outputs.version }}
+        run: |
+          mkdir -p artifacts
+          npm pack --ignore-scripts --json --pack-destination artifacts > artifacts/npm-pack.json
+          node --input-type=module <<'NODE'
+          import { appendFileSync, readFileSync } from 'node:fs';
+          import { normalizePackResult } from './scripts/release-package-utils.mjs';
+          const packages = normalizePackResult(JSON.parse(readFileSync('artifacts/npm-pack.json', 'utf8')));
+          const expected = `cqai-dsh-plugin-track-${process.env.EXPECTED_VERSION}.tgz`;
+          if (packages.length !== 1 || packages[0].name !== 'cqai-dsh-plugin-track' || packages[0].version !== process.env.EXPECTED_VERSION || packages[0].filename !== expected) throw new Error('npm pack produced an unexpected package.');
+          appendFileSync(process.env.GITHUB_OUTPUT, `filename=${expected}\n`);
+          NODE
+          tarball="artifacts/cqai-dsh-plugin-track-${EXPECTED_VERSION}.tgz"
+          node scripts/verify-package.mjs "$tarball" > artifacts/package-verification.json
+          (cd artifacts && sha256sum "cqai-dsh-plugin-track-${EXPECTED_VERSION}.tgz" > SHA256SUMS)
+
+      - name: Upload verified npm package
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ format('track-npm-{0}-{1}', github.run_id, github.run_attempt) }}
+          path: |
+            artifacts/*.tgz
+            artifacts/npm-pack.json
+            artifacts/SHA256SUMS
+            artifacts/package-verification.json
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
