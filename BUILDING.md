@@ -14,4 +14,4 @@ npm test -- --maxWorkers=2
 
 运行时宿主通过 cordis.patch.yml 注册插件。原始轨迹、照片、用户 Profile、缓存、输出视频和登录凭据均不在发布白名单中。
 
-外部依赖的完整许可与源码取得方式见 THIRD_PARTY_NOTICES.md；GeoMotion 许可状态见 src/track/vendor/geomotion/SOURCE.md。GeoMotion 的上游公开许可证仍未声明，2026-10-08 发布方另行确认已取得分发权限；本包未附书面授权条款，也未为该源码新增公开许可证。
+外部依赖的完整许可与源码取得方式见 [第三方声明](THIRD_PARTY_NOTICES.md)；GeoMotion 来源与分发记录见 [SOURCE.md](src/track/vendor/geomotion/SOURCE.md)。

@@ -24,4 +24,4 @@
 
 在插件管理中添加 `cqai-dsh-plugin-track@0.1.0-beta.3`，或安装发行页的 tgz，随后重启应用。对应源码与构建步骤见 [BUILDING.md](../../BUILDING.md)，许可及版权说明见 [THIRD_PARTY_NOTICES.md](../../THIRD_PARTY_NOTICES.md)。
 
-GeoMotion 的固定快照与上游公开许可证状态保持原记录。本版沿用 2026-10-08 npm beta.2 发行包中发布者已取得分发权限的确认，没有补造书面授权或为其赋予新的公开许可证。
+本版沿用发布者于 2026-10-08 确认取得的 GeoMotion 分发权限，详见 [分发确认记录](geomotion-distribution-record.md)。
